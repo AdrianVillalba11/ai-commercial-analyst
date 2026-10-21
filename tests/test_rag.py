@@ -16,40 +16,7 @@ from analyst.rag.lexical import BM25Index, stem, tokenize
 from analyst.rag.retriever import HybridRetriever
 from analyst.rag.semantic import SemanticIndex, fingerprint
 from analyst.security.injection import load_safe_corpus
-
-
-def make_chunk(chunk_id, text, regions=None, kind="texto") -> Chunk:
-    return Chunk(chunk_id=chunk_id, doc="d.md", doc_title="Doc", doc_type="t", section="S", kind=kind,
-                 text=text, embed_text=f"Doc | S\n{text}", regions=regions or [])
-
-
-class FakeEmbedder:
-    """Deterministic bag-of-words vectors; counts calls so caching can be tested."""
-    def __init__(self, name="fake-model", fail=False):
-        self._name, self.fail = name, fail
-        self.document_calls = self.query_calls = 0
-
-    @property
-    def name(self):
-        return self._name
-
-    def _vector(self, text):
-        v = np.zeros(128)
-        for token in tokenize(text):
-            v[zlib.crc32(token.encode()) % 128] += 1
-        return v.tolist()
-
-    def embed_documents(self, texts):
-        if self.fail:
-            raise OllamaError("Ollama apagado (simulado)")
-        self.document_calls += 1
-        return [self._vector(t) for t in texts]
-
-    def embed_query(self, text):
-        if self.fail:
-            raise OllamaError("Ollama apagado (simulado)")
-        self.query_calls += 1
-        return self._vector(text)
+from tests.helpers import FakeEmbedder, make_chunk
 
 
 # ------------------------------------------------------------------ lexical

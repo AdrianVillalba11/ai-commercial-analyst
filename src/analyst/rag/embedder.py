@@ -3,6 +3,7 @@ import httpx
 
 from analyst.config import settings
 from analyst.errors import OllamaError
+from analyst.ollama_http import post_json
 
 
 class OllamaEmbedder:
@@ -32,28 +33,11 @@ class OllamaEmbedder:
         return self._embed([self._query_prefix + text])[0]
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
-        url = f"{self._base_url}/api/embed"
+        body = post_json(self._client, self._base_url, "/api/embed", {"model": self.model, "input": texts},
+                         timeout=self._timeout, model=self.model, purpose="generar embeddings")
         try:
-            response = self._client.post(url, json={"model": self.model, "input": texts}, timeout=self._timeout)
-        except httpx.ConnectError as exc:
-            raise OllamaError(
-                f"No se pudo conectar con Ollama en {self._base_url}. "
-                "¿Está en ejecución? Inícialo con `ollama serve` (o abre la aplicación de Ollama)."
-            ) from exc
-        except httpx.TimeoutException as exc:
-            raise OllamaError(
-                f"Ollama no respondió en {self._timeout:.0f} s al generar embeddings con '{self.model}'. "
-                "La primera petición tarda más porque carga el modelo; vuelve a intentarlo."
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise OllamaError(f"Error de red al hablar con Ollama: {exc}") from exc
-        if response.status_code == 404:
-            raise OllamaError(f"El modelo de embeddings '{self.model}' no está descargado. Ejecuta: ollama pull {self.model}")
-        if response.status_code != 200:
-            raise OllamaError(f"Ollama respondió con error {response.status_code}: {response.text[:200]}")
-        try:
-            vectors = response.json()["embeddings"]
-        except (ValueError, KeyError) as exc:
+            vectors = body["embeddings"]
+        except (KeyError, TypeError) as exc:
             raise OllamaError("Respuesta inesperada de Ollama: no trae 'embeddings'.") from exc
         if len(vectors) != len(texts):
             raise OllamaError(f"Ollama devolvió {len(vectors)} embeddings para {len(texts)} textos.")

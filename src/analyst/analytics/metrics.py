@@ -96,6 +96,10 @@ def _fmt_pct(value: float) -> str:
     return f"{value:.2f}".replace(".", ",") + " %"
 
 
+format_number = _fmt_number   # public names for the prompt builder and the UI
+format_pct = _fmt_pct
+
+
 def _python_number(value):
     value = value.item() if hasattr(value, "item") else value
     return int(value) if float(value).is_integer() else float(value)
