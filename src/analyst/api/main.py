@@ -8,7 +8,6 @@ import logging
 import queue
 import threading
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Callable, Iterator, Literal
 
 import httpx

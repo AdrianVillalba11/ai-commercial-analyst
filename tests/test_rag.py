@@ -1,13 +1,10 @@
 """Tests for the hybrid retrieval pieces. No Ollama needed: a fake embedder stands in."""
 import json
-import zlib
 from dataclasses import replace
 
 import httpx
-import numpy as np
 import pytest
 
-from analyst.docs.chunker import Chunk
 from analyst.errors import OllamaError
 from analyst.rag.embedder import OllamaEmbedder
 from analyst.rag.evaluation import RETRIEVAL_CASES, VALIDATION_CASES, CaseResult, ModeSummary
