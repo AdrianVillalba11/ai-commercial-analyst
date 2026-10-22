@@ -17,7 +17,7 @@ from analyst.guardrails.models import (
     ORIGIN_CALC, ORIGIN_CONTRAST, ORIGIN_DOCUMENT, ORIGIN_MODEL, Discard, FinalAnswer, FinalClaim,
 )
 from analyst.guardrails.report_check import CONTRAST_ID, ReportContrast
-from analyst.llm.prompts import CalcBlock
+from analyst.llm.prompts import CalcBlock, similar_drops
 from analyst.llm.schemas import Answer, Claim, Gap
 from analyst.text import REGION_FOLDED, fold
 
@@ -123,6 +123,7 @@ class _Checker:
         self.all_text = list(self.calc_text.values()) + [c.text for c in ctx.evidence]
         self.top_region = self._top_region()
         self.data_regions = self._data_regions()
+        self.only_similar_drops = self._only_similar_drops()
         self.contradicted = bool(ctx.contrast and not ctx.contrast.consistent)
 
     def _top_region(self) -> str | None:
@@ -136,6 +137,12 @@ class _Checker:
         if self.ctx.contrast and self.ctx.contrast.computed_top:
             return fold(self.ctx.contrast.computed_top)
         return None
+
+    def _only_similar_drops(self) -> bool:
+        """¿Todos los cálculos con grupos muestran caídas similares? Entonces ningún grupo es "la mayor caída"."""
+        grouped = [b.result["rows"] for b in self.ctx.calc_blocks
+                   if b.calc_id != CONTRAST_ID and len(b.result.get("rows") or []) > 1]
+        return bool(grouped) and all(similar_drops(rows) for rows in grouped)
 
     def _data_regions(self) -> dict[str, int]:
         found: dict[str, int] = {}
@@ -156,11 +163,14 @@ class _Checker:
         return None
 
     def headline(self, text: str) -> str | None:
-        if not self.top_region:
+        if not self.top_region and not self.only_similar_drops:
             return None
         for sentence in _sentences(text):
             folded = fold(sentence)
             if _HEADLINE.search(folded) and not _ABOUT_REPORT.search(folded):
+                if self.only_similar_drops:
+                    return ("señala una mayor caída, pero los cálculos muestran caídas similares en todos los grupos "
+                            "(diferencias menores a 1 punto porcentual)")
                 named = _regions(sentence)
                 if named and self.top_region not in named:
                     return (f"nombra a {', '.join(sorted(r.capitalize() for r in named))} como la región de mayor caída, pero los cálculos "

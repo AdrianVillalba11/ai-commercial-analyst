@@ -417,6 +417,18 @@ def test_similar_drops_are_not_presented_as_a_largest_drop(analyzer):
     assert fact.texto.startswith("Caída similar en todos los grupos por canal: entre -10,43 % y -10,59 %")
 
 
+def test_a_summary_naming_a_largest_drop_is_discarded_when_the_drops_are_similar(analyzer, chunks):
+    """Caso real: el resumen decía 'caídas similares' y a la vez 'la mayor caída fue en Moderno'."""
+    blocks = build_calc_blocks(analyzer, Plan(tipo="cuantitativa", usar_documentos=False,
+                                              analisis=[spec(agrupar_por=["canal"])]))
+    ctx = ValidationContext(blocks, [], "cuantitativa", None, tuple(analyzer.columns))
+    final = validate_answer(answer("Las caídas son similares, pero la mayor caída se dio en el canal Moderno."), ctx)
+    assert final.resumen_origen == "calculo" and final.resumen.startswith("Caída similar")
+    assert "caídas similares en todos los grupos" in final.descartes[0].motivo
+    fine = validate_answer(answer("Todos los canales cayeron de forma parecida."), ctx)
+    assert fine.resumen_origen == "modelo" and fine.descartes == []
+
+
 def test_the_brand_total_is_stated_once_even_with_several_analyses(analyzer):
     blocks = build_calc_blocks(analyzer, Plan(tipo="integrada", usar_documentos=True,
                                               analisis=[spec(), spec(agrupar_por=["canal"])]))
