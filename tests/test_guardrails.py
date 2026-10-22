@@ -461,6 +461,45 @@ def test_a_summary_naming_a_largest_drop_is_discarded_when_the_drops_are_similar
     assert fine.resumen_origen == "modelo" and fine.descartes == []
 
 
+def test_figures_not_found_are_written_as_plain_numbers_not_scientific_notation():
+    assert figures_supported("Creció 20 %", ["nada"]) == ["20"]
+    assert figures_supported("Vendió 363.431.601", ["nada"]) == ["363431601"]
+
+
+def test_a_question_naming_another_brand_gets_a_visible_notice(make_service):
+    llm = FakeLLM(plan=Plan(tipo="cuantitativa", analisis=[spec(region="Norte")], usar_documentos=False))
+    result = make_service(llm).ask("¿Cuánto vendió la marca Luma en el Norte durante T2?")
+    first = result.final.insuficiente[0]
+    assert "otra marca (Luma)" in first.texto and "únicamente el desempeño de Brío" in first.texto
+    assert first.origen == "calculo"
+
+
+@pytest.mark.parametrize("question", [
+    "¿Cuál fue la región con mayor caída de Brío?",
+    "¿Cómo va la senda de recuperación del Sur?",            # palabra común, no es la marca
+    "Un rizo en la tendencia de ventas del Centro.",
+])
+def test_ordinary_questions_get_no_brand_notice(make_service, question):
+    llm = FakeLLM(plan=Plan(tipo="cuantitativa", analisis=[spec()], usar_documentos=False))
+    result = make_service(llm).ask(question)
+    assert not any("otra marca" in c.texto for c in result.final.insuficiente)
+
+
+def test_a_question_about_promotions_or_prices_says_the_sales_base_has_no_such_variables(make_service):
+    llm = FakeLLM(plan=Plan(tipo="cuantitativa", analisis=[spec()], usar_documentos=False))
+    result = make_service(llm).ask("¿Hay datos de promociones o precios en la base de ventas?")
+    texts = [c.texto for c in result.final.insuficiente]
+    assert texts[0].startswith("La base de ventas no contiene variables de promoción ni de precio")
+    plain = make_service(llm).ask("¿Cuál fue la región con mayor caída?")
+    assert not any("variables de promoción" in c.texto for c in plain.final.insuficiente)
+
+
+def test_the_promotion_limit_is_not_repeated_in_causality_questions(make_service):
+    plan = Plan(tipo="causalidad", analisis=[spec()], usar_documentos=True)
+    result = make_service(FakeLLM(plan=plan)).ask("¿Las promociones de la competencia causaron la caída?")
+    assert sum("variables de promoción" in c.texto for c in result.final.insuficiente) == 1
+
+
 def test_the_brand_total_is_stated_once_even_with_several_analyses(analyzer):
     blocks = build_calc_blocks(analyzer, Plan(tipo="integrada", usar_documentos=True,
                                               analisis=[spec(), spec(agrupar_por=["canal"])]))

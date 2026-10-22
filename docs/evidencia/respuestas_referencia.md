@@ -1,6 +1,6 @@
 # Respuestas de referencia del sistema
 
-- Fecha: 2026-10-22 09:39
+- Fecha: 2026-10-22 10:38
 - Python: 3.13.14 · Sistema: Windows 11
 - Modelo de generación: llama3 · Modelo de embeddings: bge-m3 · Búsqueda por defecto: semantic
 
@@ -10,7 +10,7 @@
 
 > ¿Cuál fue la región con mayor caída porcentual en ventas netas de Brío entre T1 y T2 de 2026? Muestra los valores y el cálculo.
 
-**Configuración:** modelo `llama3` · búsqueda `semantic` · plan `cuantitativa` (modelo) · 9.1 s
+**Configuración:** modelo `llama3` · búsqueda `semantic` · plan `cuantitativa` (modelo) · 8.2 s
 
 **Resumen:** La región con mayor caída porcentual en ventas netas de Brío entre T1 y T2 de 2026 fue el Sur, con una variación de -30,27%.
 
@@ -22,7 +22,7 @@
 
 **Descartado por el validador** (afirmaciones del modelo que no pasaron las verificaciones)
 
-- «La caída en ventas netas en el Sur puede estar relacionada con la competencia en el mercado regional.» → es una hipótesis y no cita ningún documento que la sugiera
+- «La caída en ventas netas en el Sur puede estar relacionada con la competencia en el mercado local, según fuentes de la región.» → es una hipótesis y no cita ningún documento que la sugiera
 
 **Cálculos**
 
@@ -41,9 +41,9 @@ Mayor caída: Sur (-30,27 %)
 
 > ¿Qué hallazgos de consumidor y observaciones comerciales podrían ayudar a explicar el deterioro de Brío?
 
-**Configuración:** modelo `llama3` · búsqueda `semantic` · plan `integrada` (modelo) · 18.4 s
+**Configuración:** modelo `llama3` · búsqueda `semantic` · plan `integrada` (modelo) · 14.4 s
 
-**Resumen:** El deterioro de Brío se asocia con la caída en ventas netas en el segundo trimestre, especialmente en la región Sur. La disponibilidad y la competitividad promocional de la marca pueden ser factores clave.
+**Resumen:** El deterioro de Brío se asocia con la disminución de ventas en Sur y la mayor caída en Sur/Tradicional (-30,28%). La disponibilidad percibida y la competitividad promocional pueden haber influido.
 
 **Hechos**
 
@@ -54,21 +54,21 @@ Mayor caída: Sur (-30,27 %)
 
 **Hipótesis (no demostradas)**
 
-- La disponibilidad y la competitividad promocional de la marca pueden ser factores clave en el deterioro de Brío. _[REP-02, REP-S1-1; modelo]_
-- La percepción de disponibilidad puede influir en la venta de Brío. _[INV-02, OC-SUR-01; modelo]_
+- La mayor caída en Sur/Tradicional puede estar relacionada con la disponibilidad percibida y la competitividad promocional. _[OC-SUR-01; modelo]_
 
 **Información insuficiente**
 
-- No se puede determinar cuánto de la caída de ventas se explica por disponibilidad o promoción [OC-SUR-01]. _[modelo]_
+- No se puede determinar cuánto de la caída de ventas se explica por disponibilidad o promoción. _[modelo]_
 
 **Descartado por el validador** (afirmaciones del modelo que no pasaron las verificaciones)
 
-- «La caída de ventas de Brío se atribuye a promociones de competidores (70 %) [REP-02], pero no se puede determinar cuánto de la caída se explica por disponibilidad o promoción [OC-SUR-01].» → la cifra 7E+1 no aparece en las fuentes que cita
+- «Dinámica competitiva. Se estima que las promociones de competidores explican aproximadamente el 70 % de la contracción de ventas de Brío.» → es una afirmación del reporte comercial, no un hecho verificado
+- «La variación en Sur/Tradicional (-30,28%) es mayor que la variación en Sur/Moderno (-30,26%).» → una contradicción es entre fuentes: debe citar al menos dos
 
 **Evidencia consultada:** REP-02, REP-S1-1, ENT-CEN-04, INV-02, INV-S0-2, OC-SUR-01
 
 **Avisos:**
-- Se eliminó la fuente REP-02 (no menciona ninguna región): la afirmación habla de Sur.
+- Se eliminó la fuente INV-02 (no menciona ese canal): la afirmación habla del canal Tradicional.
 
 **Cálculos**
 
@@ -100,7 +100,7 @@ Caída similar en todos los grupos (entre -10,44 % y -10,84 %): las diferencias 
 
 > ¿Son consistentes las principales conclusiones del reporte comercial con los datos de ventas?
 
-**Configuración:** modelo `llama3` · búsqueda `semantic` · plan `contraste_reporte` (modelo) · 16.5 s
+**Configuración:** modelo `llama3` · búsqueda `semantic` · plan `contraste_reporte` (modelo) · 16.6 s
 
 **Resumen:** El reporte NO es consistente con los datos: 2 de 5 regiones difieren más de 1 pp (Centro, Sur) y señala a Centro como la región de mayor caída, cuando los datos indican Sur (-30,27 %). _(redactado por el sistema a partir de los cálculos)_
 
@@ -130,16 +130,15 @@ Caída similar en todos los grupos (entre -10,44 % y -10,84 %): las diferencias 
 **Información insuficiente**
 
 - REP-02 atribuye un porcentaje de la caída a una causa; no es verificable: la base de ventas no contiene variables de promoción ni de precio (columnas: registro_id, mes, marca, region, canal, punto_venta_id, presentacion, unidades, venta_neta_cop). _[CONTRASTE-1, REP-02; contraste]_
-- No se puede afirmar que la caída de ventas en el Sur esté relacionada con la disponibilidad y la competitividad promocional de la marca, ya que no se presentan evidencias causales demostradas. _[modelo]_
+- No se puede afirmar que la caída de ventas en el Sur esté causada por la disponibilidad y la competitividad promocional de la marca, ya que no se dispone de evidencia causal demostrada. _[modelo]_
 
 **Descartado por el validador** (afirmaciones del modelo que no pasaron las verificaciones)
 
-- «La caída de ventas en el Sur puede estar relacionada con la disponibilidad y la competitividad promocional de la marca, según el equipo comercial.» → menciona Sur, pero la fuente citada no lo respalda (REP-S5-1 no menciona ninguna región; REP-S1-1 no menciona ninguna región)
+- «La caída de ventas en el Sur puede estar relacionada con la disponibilidad y la competitividad promocional de la marca, según el equipo comercial.» → menciona Sur, pero la fuente citada no lo respalda (REP-S1-1 no menciona ninguna región)
 
 **Evidencia consultada:** REP-S5-1, REP-S1-1, CTX-CONVENCIONES-DE-ANALISIS, REP-S7-1, REP-S0-1, INV-05
 
 **Avisos:**
-- Se eliminó la fuente REP-S5-1 (no menciona ninguna región): la afirmación habla de Sur.
 - Se eliminó la fuente REP-S1-1 (no menciona ninguna región): la afirmación habla de Sur.
 
 **Cálculos**
@@ -172,7 +171,7 @@ Veredicto: El reporte NO es consistente con los datos: 2 de 5 regiones difieren 
 
 > ¿Podemos afirmar que las promociones de la competencia causaron la caída de ventas? ¿Qué evidencia lo sustenta o limita?
 
-**Configuración:** modelo `llama3` · búsqueda `semantic` · plan `causalidad` (modelo) · 16.2 s
+**Configuración:** modelo `llama3` · búsqueda `semantic` · plan `causalidad` (modelo) · 15.5 s
 
 **Resumen:** No se puede afirmar causalidad. La base de ventas no contiene variables de promoción ni de precio: los datos no permiten medir el efecto de las promociones de la competencia. _(redactado por el sistema a partir de los cálculos)_
 
@@ -184,17 +183,17 @@ Veredicto: El reporte NO es consistente con los datos: 2 de 5 regiones difieren 
 
 **Contradicciones entre fuentes**
 
-- La evidencia no es concluyente sobre la causalidad de las promociones de la competencia en la caída de ventas de Brío, según [INV-04] y [INV-LIM-02]. _[INV-04, INV-LIM-02; modelo]_
+- REP-02 estima que las promociones de competidores explican aproximadamente el 70 % de la contracción de ventas de Brío, mientras que INV-04 no encontró evidencia concluyente sobre promociones. _[REP-02, INV-04; modelo]_
 
 **Hipótesis (no demostradas)**
 
-- La competencia podría explicar parte de la contracción de ventas de Brío, según [REP-02] y [OC-CEN-02]. _[REP-02, OC-CEN-02; modelo]_
+- La competencia podría explicar parte de la contracción de ventas de Brío, según REP-02 y OC-CEN-02. _[REP-02, OC-CEN-02; modelo]_
 
 **Información insuficiente**
 
 - La base de ventas no contiene variables de promoción ni de precio: los datos no permiten medir el efecto de las promociones de la competencia. _[calculo]_
 - La evidencia cualitativa (entrevistas y visitas) no mide impacto: no hubo grupo de control ni mediciones antes y después, así que no establece causalidad. _[REP-02, INV-04, INV-LIM-02; calculo]_
-- No se puede afirmar que las promociones de la competencia causen la caída de ventas de Brío sin un diseño experimental o series consolidadas de precios promocionales, según [REP-02] y [INV-LIM-02]. _[modelo]_
+- No se puede afirmar que las promociones de la competencia causaron la caída de ventas de Brío, ya que no se midieron elasticidades ni se verificó un cambio causal asociado con una promoción o una ruptura de inventario, según INV-LIM-02. _[modelo]_
 
 **Evidencia consultada:** REP-02, INV-04, OC-CEN-02, INV-REGION-CENTRO, REP-S1-1, REP-S7-1, INV-LIM-02
 
@@ -215,9 +214,9 @@ Mayor caída: Sur (-30,27 %)
 
 > ¿Cómo variaron las unidades vendidas de Brío en la presentación Familiar entre T1 y T2, y en qué canal fue mayor la caída?
 
-**Configuración:** modelo `llama3` · búsqueda `semantic` · plan `cuantitativa` (modelo) · 12.6 s
+**Configuración:** modelo `llama3` · búsqueda `semantic` · plan `cuantitativa` (modelo) · 12.9 s
 
-**Resumen:** La venta de Brío en la presentación Familiar disminuyó en -2.278 unidades (-11,23%) en el T2 respecto al T1, con una caída similar en todos los grupos.
+**Resumen:** Caída similar en todos los grupos por presentación y canal (presentacion = Familiar): entre -10,53 % y -11,23 % (diferencias menores a 1 punto porcentual). _(redactado por el sistema a partir de los cálculos)_
 
 **Hechos**
 
@@ -226,7 +225,8 @@ Mayor caída: Sur (-30,27 %)
 
 **Descartado por el validador** (afirmaciones del modelo que no pasaron las verificaciones)
 
-- «La disminución en la venta de Brío en la presentación Familiar puede estar relacionada con la competencia en el mercado.» → es una hipótesis y no cita ningún documento que la sugiera
+- «La caída en las unidades vendidas de Brío en la presentación Familiar entre T1 y T2 puede estar relacionada con la competencia en el mercado.» → es una hipótesis y no cita ningún documento que la sugiera
+- «La variación de unidades vendidas de Brío en la presentación Familiar entre T1 y T2 fue negativa en todos los grupos, con caídas similares entre -10,53% y -11,23%. La mayor caída se dio en el canal Familiar / Moderno.» → señala una mayor caída, pero los cálculos muestran caídas similares en todos los grupos (diferencias menores a 1 punto porcentual)
 
 **Cálculos**
 
@@ -242,9 +242,9 @@ Caída similar en todos los grupos (entre -10,53 % y -11,23 %): las diferencias 
 
 > ¿Qué dicen los comerciantes sobre los faltantes de producto en el Sur?
 
-**Configuración:** modelo `llama3` · búsqueda `semantic` · plan `integrada` (plan por defecto) · 8.9 s
+**Configuración:** modelo `llama3` · búsqueda `semantic` · plan `integrada` (plan por defecto) · 8.1 s
 
-**Resumen:** Los comerciantes en el Sur mencionan la falta de producto como una posible razón para la caída en las ventas de Brío.
+**Resumen:** Los comerciantes en el Sur mencionan la falta de producto como una posible razón para la caída de ventas de Brío.
 
 **Hechos**
 
@@ -253,7 +253,7 @@ Caída similar en todos los grupos (entre -10,53 % y -11,23 %): las diferencias 
 
 **Hipótesis (no demostradas)**
 
-- La falta de producto puede haber contribuido a la caída en las ventas de Brío en el Sur. _[OC-SUR-01, REP-03, INV-02; modelo]_
+- La falta de producto puede haber contribuido a la caída de ventas de Brío en el Sur. _[OC-SUR-01, REP-03, INV-02; modelo]_
 
 **Información insuficiente**
 

@@ -21,7 +21,7 @@ from analyst.docs.parser import parse_reported_regional_variation
 from analyst.errors import OllamaError
 from analyst.guardrails.models import FinalAnswer
 from analyst.guardrails.report_check import CONTRAST_ID, ReportContrast, compare_report_to_data
-from analyst.guardrails.validator import ValidationContext, validate_answer
+from analyst.guardrails.validator import ValidationContext, question_notices, validate_answer
 from analyst.llm.answerer import ANSWER_MAX_TOKENS, answer_question, out_of_scope_answer
 from analyst.llm.ollama_client import OllamaChat
 from analyst.llm.planner import StructuredLLM, plan_question
@@ -205,6 +205,8 @@ class AnalystService:
         context = ValidationContext(calc, [i.chunk for i in bundle.evidence_used], plan.tipo, contrast,
                                     tuple(self._analyzer.columns))
         final = validate_answer(generated.value, context)
+        # Avisos sobre la pregunta (otra marca, promoción/precio): van primero en "Información insuficiente".
+        final.insuficiente = question_notices(question, plan.tipo, context.columns) + final.insuficiente
         timings["validacion"] = time.perf_counter() - t
         timings["total"] = time.perf_counter() - started
 

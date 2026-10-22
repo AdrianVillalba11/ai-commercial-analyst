@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 
+from analyst.data.cleaning import BRANDS
 from analyst.docs.chunker import Chunk
 from analyst.guardrails.facts import calc_facts
 from analyst.guardrails.models import (
@@ -56,6 +57,12 @@ _NO_CONTRADICTIONS = re.compile(
 # Titulares tipo "mayor caída" y referencias al reporte (para no confundir lo que dice el reporte con un hecho).
 _HEADLINE = re.compile(r"\bmayor (?:caida|descenso|deterioro|disminucion|baja)\b|\bmas (?:cayo|cae|cayeron)\b|"
                        r"\bpeor desempeno\b")
+# Avisos sobre la pregunta: otra marca nombrada, o consulta sobre promoción/precio/descuento.
+_OTHER_BRANDS = [b for b in BRANDS if b != "Brio"]
+_OTHER_BRAND_WORD = re.compile(r"\b(" + "|".join(_OTHER_BRANDS) + r")\b|\bmarca\s+(" + "|".join(b.lower() for b in _OTHER_BRANDS) + r")\b")
+_PROMO_PRICE_QUESTION = re.compile(r"promo|precio|descuento")
+_NO_PROMO_PRICE_TEXT = ("La base de ventas no contiene variables de promoción ni de precio: los datos no "
+                        "permiten medir el efecto de las promociones de la competencia.")
 _ABOUT_REPORT = re.compile(r"\breporte\b|\binforme\b|\brep-\d")
 
 
@@ -119,7 +126,7 @@ def figures_supported(text: str, source_texts: list[str]) -> list[str]:
         quantum = Decimal(1).scaleb(-decimals)
         if not any(a.quantize(quantum, rounding=ROUND_HALF_UP) == value.quantize(quantum, rounding=ROUND_HALF_UP)
                    for a in available):
-            missing.append(str(value.normalize()))
+            missing.append(format(value.normalize(), "f"))   # "20", no "2E+1"
     return missing
 
 
@@ -310,6 +317,25 @@ def _check_gap(checker: _Checker, gap: Gap) -> str | None:
     return checker.missing_data(gap.texto) or checker.missing_sales(gap.texto) or checker.no_contradictions(gap.texto)
 
 
+# =====================================================================
+# BLOQUE: Avisos sobre la propia pregunta
+# Los escribe el código (no el modelo) y aparecen en "Información insuficiente", que es visible.
+# =====================================================================
+def question_notices(question: str, plan_type: str, columns: tuple[str, ...]) -> list[FinalClaim]:
+    """Avisos que dependen de lo que se preguntó: nombra otra marca, o pregunta por promoción/precio sin que la base los tenga."""
+    notices = []
+    other = list(dict.fromkeys(m[0] or m[1].capitalize() for m in _OTHER_BRAND_WORD.findall(question)))
+    if other:
+        names = ", ".join(other)
+        notices.append(FinalClaim(f"Tu pregunta nombra otra marca ({names}). Este asistente analiza únicamente el desempeño "
+                                  f"de Brío: las cifras de esta respuesta son de Brío, no de {names}.", [], ORIGIN_CALC))
+    # En causalidad el validador ya agrega esta limitación; aquí solo se cubren las demás preguntas.
+    has_cause_columns = any(re.search(r"promo|precio|descuento", fold(c)) for c in columns)
+    if plan_type != "causalidad" and columns and not has_cause_columns and _PROMO_PRICE_QUESTION.search(fold(question)):
+        notices.append(FinalClaim(_NO_PROMO_PRICE_TEXT, [], ORIGIN_CALC))
+    return notices
+
+
 def _fallback_summary(ctx: ValidationContext, facts: list[FinalClaim]) -> str:
     """Resumen de respaldo (escrito por código) cuando el del modelo no pasa las reglas."""
     if ctx.contrast:
@@ -324,8 +350,7 @@ def _causality_limits(ctx: ValidationContext) -> list[FinalClaim]:
     limits = []
     cause_columns = [c for c in ctx.columns if re.search(r"promo|precio|descuento", fold(c))]
     if ctx.columns and not cause_columns:
-        limits.append(FinalClaim("La base de ventas no contiene variables de promoción ni de precio: los datos no "
-                                 "permiten medir el efecto de las promociones de la competencia.", [], ORIGIN_CALC))
+        limits.append(FinalClaim(_NO_PROMO_PRICE_TEXT, [], ORIGIN_CALC))
     cited = [c.chunk_id for c in ctx.evidence if c.kind == "limitacion" or _LIMITATION_TEXT.search(fold(c.text))]
     if cited:
         limits.append(FinalClaim("La evidencia cualitativa (entrevistas y visitas) no mide impacto: no hubo grupo de "

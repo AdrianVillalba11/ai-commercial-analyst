@@ -126,7 +126,7 @@ Casi todo es el modelo escribiendo (unos 53 tokens por segundo).
 **Modelo de lenguaje**
 
 4. **No es determinista:** un modelo local puede redactar distinto en cada ejecución, incluso con temperatura 0. Lo estable son las cifras, el veredicto del contraste y las limitaciones de causalidad.
-5. **Calidad variable en preguntas abiertas:** en las que dependen del modelo (por ejemplo, "¿qué hallazgos explican el deterioro?") a veces salen hipótesis débiles. Se marcan como no demostradas y con su fuente, pero existen.
+5. **Calidad variable en preguntas abiertas:** en las que dependen del modelo (por ejemplo, "¿qué hallazgos explican el deterioro?") a veces salen hipótesis débiles. Se marcan como no demostradas y con su fuente, pero existen. También puede equivocarse el planificador al clasificar una pregunta: una consulta que no es de las cuatro de referencia, como "¿qué recomienda el reporte comercial sobre los inventarios?", se trató como contraste con los datos y devolvió el veredicto de consistencia en lugar de la recomendación. Se dejó así a propósito: ajustar el planificador podía empeorar las preguntas de referencia, que hoy se clasifican bien.
 6. **Un modelo de 8.000 millones de parámetros** tiene un techo de comprensión. Uno mayor mejoraría, pero necesitaría más GPU.
 
 **Seguridad y validación**
@@ -145,7 +145,7 @@ Casi todo es el modelo escribiendo (unos 53 tokens por segundo).
 
 13. **Probado únicamente** en Windows 11, con Python 3.13 y una GPU de 8 GB.
 14. **Una pregunta a la vez,** sin usuarios ni autenticación: está pensado para una demostración local, no para producción.
-15. **Idioma:** solo español.
+15. **Idioma y alcance:** solo español, y solo la marca Brío, que es lo que pide el reto. El CSV trae otras cuatro marcas que no se analizan; si la pregunta nombra una de ellas, la respuesta lo avisa en "Información insuficiente" y sigue mostrando cifras de Brío. Del mismo modo, si se pregunta por promociones o precios, se avisa que la base de ventas no tiene esas variables (los documentos solo las mencionan de forma cualitativa).
 
 ## 10. Qué haría con más tiempo
 
