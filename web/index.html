@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Analista comercial de Brío</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Analista comercial de Brío</h1>
+      <p>Respuestas con cálculos verificables y fuentes citables</p>
+    </div>
+    <div class="topbar-actions">
+      <span id="status" class="status status-wait" role="status">Comprobando…</span>
+      <button id="btn-quality" class="link-btn" type="button">Calidad de datos</button>
+      <button id="btn-security" class="link-btn" type="button">Alertas de seguridad</button>
+    </div>
+  </header>
+
+  <main>
+    <noscript><p class="banner banner-error">Esta página necesita JavaScript activado.</p></noscript>
+
+    <section class="card ask" aria-labelledby="ask-title">
+      <h2 id="ask-title">Haz una pregunta sobre Brío</h2>
+      <label for="question" class="sr-only">Pregunta</label>
+      <textarea id="question" rows="3" maxlength="1000"
+        placeholder="Por ejemplo: ¿Cuál fue la región con mayor caída porcentual entre T1 y T2?"></textarea>
+      <div class="ask-actions">
+        <button id="ask-btn" class="primary" type="button">Preguntar</button>
+        <span class="hint">Ctrl + Enter</span>
+        <details class="options">
+          <summary>Opciones</summary>
+          <label for="mode">Búsqueda en documentos</label>
+          <select id="mode">
+            <option value="">Por defecto</option>
+            <option value="semantic">Semántica (por significado)</option>
+            <option value="hybrid">Híbrida (significado + palabras clave)</option>
+            <option value="lexical">Léxica (solo palabras clave)</option>
+          </select>
+        </details>
+      </div>
+      <div class="examples">
+        <p>Preguntas de ejemplo:</p>
+        <div id="examples" class="chip-row"></div>
+      </div>
+    </section>
+
+    <section id="progress" class="card progress" hidden aria-live="polite">
+      <ol id="steps"></ol>
+      <p id="elapsed" class="hint"></p>
+    </section>
+
+    <div id="error" class="banner banner-error" role="alert" hidden></div>
+
+    <article id="answer" hidden aria-label="Respuesta"></article>
+  </main>
+
+  <div id="overlay" class="overlay" hidden></div>
+  <aside id="drawer" class="drawer" hidden aria-label="Detalle">
+    <div class="drawer-head">
+      <h2 id="drawer-title"></h2>
+      <button id="drawer-close" class="link-btn" type="button">Cerrar</button>
+    </div>
+    <div id="drawer-body" class="drawer-body"></div>
+  </aside>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

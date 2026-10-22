@@ -6,6 +6,7 @@ every citation can be verified.
 """
 import time
 from dataclasses import dataclass, field
+from typing import Callable
 
 from analyst.analytics.metrics import SalesAnalyzer
 from analyst.config import settings
@@ -86,6 +87,22 @@ class AnalystService:
         self._quality_report, self._screening = quality_report, screening
         self._reported = reported_variation
         self._corpus_chunks = corpus_chunks or (screening.safe if screening else [])
+        self._chunks_by_id = {c.chunk_id: c for c in self._corpus_chunks}
+
+    @property
+    def document_count(self) -> int:
+        return len(self._corpus_chunks)
+
+    def get_chunk(self, chunk_id: str) -> Chunk | None:
+        """A fragment of the screened corpus. Quarantined fragments are not in it, so they are never served."""
+        return self._chunks_by_id.get(chunk_id)
+
+    def warm_up(self) -> None:
+        """Load the models into memory so the first real question is not slow."""
+        self._retriever.retrieve("calentamiento", top_k=1, mode=settings.retrieval_mode)
+        warm = getattr(self._llm, "warm_up", None)
+        if warm:
+            warm()
 
     def data_quality(self) -> dict:
         return self._quality_report.to_dict() if self._quality_report else {}
@@ -93,8 +110,11 @@ class AnalystService:
     def security_alerts(self) -> list[dict]:
         return [f.to_dict() for f in (self._screening.quarantined + self._screening.warnings)] if self._screening else []
 
-    def ask(self, question: str, mode: str | None = None, top_k: int = 6) -> AskResult:
+    def ask(self, question: str, mode: str | None = None, top_k: int = 6,
+            progress: Callable[[str], None] | None = None) -> AskResult:
+        """`progress`, if given, is called with the name of each step as it starts."""
         mode = mode or settings.retrieval_mode
+        notify = progress or (lambda step: None)
         question = question.strip()
         if not question:
             raise ValueError("La pregunta está vacía.")
@@ -104,6 +124,7 @@ class AnalystService:
         timings: dict[str, float] = {}
         warnings: list[str] = []
 
+        notify("planificacion")
         t = time.perf_counter()
         planned = plan_question(self._llm, question)
         timings["planificacion"] = time.perf_counter() - t
@@ -116,6 +137,7 @@ class AnalystService:
             return AskResult(question, plan, planned.source, [], [], answer, FinalAnswer.unchecked(answer), timings,
                              warnings, [], mode, self._llm.name)
 
+        notify("calculo")
         t = time.perf_counter()
         calc = build_calc_blocks(self._analyzer, plan)
         contrast = self._contrast(plan, calc, warnings)
@@ -124,6 +146,7 @@ class AnalystService:
 
         items: list[RetrievedChunk] = []
         if plan.usar_documentos:
+            notify("recuperacion")
             t = time.perf_counter()
             regions = sorted({s.region for s in plan.analisis if s.region != "todas"}) or None
             retrieved = self._retriever.retrieve(question, top_k=top_k, regions=regions, mode=mode)
@@ -139,11 +162,13 @@ class AnalystService:
             warnings.append(f"Se recortaron {bundle.evidence_dropped} fragmentos de evidencia para caber en el "
                             f"contexto del modelo ({num_ctx} tokens).")
 
+        notify("redaccion")
         t = time.perf_counter()
         generated = answer_question(self._llm, bundle)
         timings["redaccion"] = time.perf_counter() - t
         warnings += [f"Redactor: {n}" for n in generated.info.notes]
 
+        notify("validacion")
         t = time.perf_counter()
         context = ValidationContext(calc, [i.chunk for i in bundle.evidence_used], plan.tipo, contrast,
                                     tuple(self._analyzer.columns))

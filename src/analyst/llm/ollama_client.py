@@ -84,6 +84,14 @@ class OllamaChat:
             f"El modelo '{self.model}' no devolvió una respuesta válida tras reintentar ({problem}). "
             "Vuelve a intentarlo; si se repite, prueba otro modelo con LLM_MODEL.")
 
+    def warm_up(self) -> None:
+        """Load the model with the same context size the real requests use, so it is not reloaded later."""
+        post_json(self._client, self._base_url, "/api/chat",
+                  {"model": self.model, "stream": False, "keep_alive": self._keep_alive,
+                   "options": {"num_ctx": self.num_ctx, "num_predict": 1},
+                   "messages": [{"role": "user", "content": "hola"}]},
+                  timeout=self._timeout, model=self.model, purpose="cargar el modelo")
+
     def _payload(self, system: str, user: str, schema: dict, max_tokens: int) -> dict:
         return {
             "model": self.model, "stream": False, "format": schema, "keep_alive": self._keep_alive,
