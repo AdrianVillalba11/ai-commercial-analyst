@@ -1,7 +1,9 @@
-"""Retrieval quality with the real embedding model (skipped when Ollama is not available).
+"""
+PRUEBA DE CALIDAD DE LA BÚSQUEDA CON EL MODELO REAL
 
-The bar was fixed before measuring: for every reference question, the hybrid search must
-return at least one of the expected evidence ids in the top 6. It is not adjusted to results.
+Qué verifica: que la búsqueda encuentra la evidencia esperada usando bge-m3 de verdad (se salta sola si Ollama no está).
+Regla fijada ANTES de medir: para cada pregunta de referencia, la búsqueda híbrida debe devolver al menos uno de los ids
+esperados entre los 6 primeros. No se ajusta a los resultados.
 """
 import pytest
 
@@ -51,7 +53,7 @@ def test_hybrid_returns_an_expected_id_for_every_reference_question(summaries):
 
 
 def test_hybrid_holds_up_on_questions_it_was_not_tuned_on(validation):
-    """Bar fixed before measuring: at least 11 of the 12 validation questions get an expected id."""
+    """Umbral fijado antes de medir: al menos 11 de las 12 preguntas de validación obtienen un id esperado."""
     assert validation["hybrid"].hits >= 11
 
 

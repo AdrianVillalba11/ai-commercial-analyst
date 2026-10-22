@@ -1,5 +1,10 @@
-"""Start the web application and open it in the browser.
+"""
+ARRANQUE DE LA APLICACIÓN WEB
 
+Qué hace: levanta el servidor y abre la página en el navegador.
+Con qué se conecta: importa la aplicación de src/analyst/api/main.py. No requiere instalar el paquete.
+
+Uso:
     python run.py                 # http://127.0.0.1:8000
     python run.py --port 8080 --no-browser
 """
@@ -10,16 +15,18 @@ import time
 import webbrowser
 from pathlib import Path
 
+# Permite importar `analyst` sin instalarlo: se agrega la carpeta src al path.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 import uvicorn  # noqa: E402
 
 from analyst.api.main import app  # noqa: E402
 
-HOST = "127.0.0.1"   # only this computer can reach the application
+HOST = "127.0.0.1"   # solo este computador puede acceder a la aplicación
 
 
 def main() -> int:
+    """Lee los argumentos, anuncia la dirección, abre el navegador a los 4 s y arranca el servidor."""
     parser = argparse.ArgumentParser(description="Analista comercial de Brío")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--no-browser", action="store_true", help="No abrir el navegador automáticamente")

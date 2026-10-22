@@ -1,8 +1,12 @@
-"""Extract structured blocks (titles, headings, paragraphs, bullets, tables) from each format.
+"""
+LECTURA DE DOCUMENTOS (Markdown, Word y PDF)
 
-Parsers only extract and clean; deciding what becomes a chunk is the chunker's job.
-PDF tables lose their cell boundaries in plain text extraction, so tables are rebuilt from
-word coordinates (see `_table_rows`).
+Qué hace: extrae de cada formato bloques estructurados (títulos, encabezados, párrafos, viñetas, tablas).
+Con qué se conecta: lo usa docs/chunker.py, que decide qué bloque se convierte en fragmento citable,
+y guardrails/report_check.py para leer la tabla de variación regional del reporte.
+Idea clave: los lectores solo extraen y limpian. En los PDF las tablas pierden sus celdas al
+extraer el texto plano, así que se reconstruyen a partir de las coordenadas de las palabras
+(ver `_table_rows`).
 """
 import re
 from collections import Counter
@@ -14,25 +18,35 @@ import pdfplumber
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
-_PARAGRAPH_GAP = 8.0      # points between lines; within a paragraph it is ~6, between paragraphs >= 10
-_HEADING_SIZE = 11.0      # numbered section headings are 11.2 pt, body text 8.8 pt or less
-_TITLE_SIZE = 16.0        # document title / page subtitle is 17 pt
-_COLUMN_GAP = 12.0        # horizontal gap (points) that separates two table columns
-_COLUMN_MARGIN = 6.0      # tolerance to the left of a column's start
+# =====================================================================
+# BLOQUE: Constantes de maquetación del PDF
+# Medidas en puntos tipográficos, calibradas con los PDF entregados.
+# =====================================================================
+_PARAGRAPH_GAP = 8.0      # puntos entre líneas; dentro de un párrafo ~6, entre párrafos >= 10
+_HEADING_SIZE = 11.0      # los encabezados numerados miden 11,2 pt; el texto, 8,8 pt o menos
+_TITLE_SIZE = 16.0        # el título del documento y el subtítulo de página miden 17 pt
+_COLUMN_GAP = 12.0        # separación horizontal (puntos) que distingue dos columnas de una tabla
+_COLUMN_MARGIN = 6.0      # tolerancia a la izquierda del inicio de una columna
 _FOOTER_RE = re.compile(r"P[áa]gina\s+\d+\s*$")
 _ID_START = re.compile(r"^[A-Z]{2,5}(?:-[A-Za-z0-9]+)+\s*[|:]")
 
 
+# =====================================================================
+# BLOQUE: Estructura común de salida
+# =====================================================================
 @dataclass
 class Block:
-    kind: str                         # title | heading | paragraph | bullet | quote | table
+    """Un bloque de contenido ya extraído, sin importar de qué formato venga."""
+
+    kind: str                         # title | heading | paragraph | bullet | quote | table (título, encabezado, párrafo, viñeta, cita, tabla)
     text: str = ""
     level: int = 0
     page: int | None = None
-    rows: list[list[str]] | None = None   # tables: first row is the header
+    rows: list[list[str]] | None = None   # tablas: la primera fila es el encabezado
 
 
 def _require(path: Path) -> Path:
+    """Comprueba que el archivo exista; si no, da un error claro."""
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"No se encontró el documento: {path}")
@@ -40,23 +54,28 @@ def _require(path: Path) -> Path:
 
 
 def _clean(text: str) -> str:
+    """Colapsa espacios y saltos de línea repetidos."""
     return re.sub(r"\s+", " ", text).strip()
 
 
-# ---------------------------------------------------------------- markdown
-
+# =====================================================================
+# BLOQUE: Markdown
+# =====================================================================
 def parse_markdown(path: Path) -> list[Block]:
+    """Lee un .md: títulos (#), encabezados (##), viñetas (-), tablas (|) y párrafos."""
     lines = _require(path).read_text(encoding="utf-8").splitlines()
     blocks: list[Block] = []
     table_lines: list[str] = []
     paragraph: list[str] = []
 
     def flush_paragraph():
+        """Cierra el párrafo en curso (las líneas seguidas se unen en uno solo)."""
         if paragraph:
             blocks.append(Block("paragraph", _clean(" ".join(paragraph))))
             paragraph.clear()
 
     def flush_table():
+        """Cierra la tabla en curso; descarta la fila separadora |---|---|."""
         if table_lines:
             rows = []
             for line in table_lines:
@@ -92,9 +111,11 @@ def parse_markdown(path: Path) -> list[Block]:
     return blocks
 
 
-# -------------------------------------------------------------------- docx
-
+# =====================================================================
+# BLOQUE: Word (.docx)
+# =====================================================================
 def parse_docx(path: Path) -> list[Block]:
+    """Lee un .docx recorriendo el cuerpo en orden; el estilo de cada párrafo define su tipo de bloque."""
     document = docx.Document(str(_require(path)))
     blocks: list[Block] = []
     for element in document.element.body.iterchildren():
@@ -110,7 +131,7 @@ def parse_docx(path: Path) -> list[Block]:
             if style == "Title":
                 blocks.append(Block("title", text))
             elif style == "Subtitle":
-                continue  # a label such as "INSUMO DE NEGOCIO", not content
+                continue  # es una etiqueta como "INSUMO DE NEGOCIO", no contenido
             elif style.startswith("Heading"):
                 blocks.append(Block("heading", text, level=int(style.split()[-1])))
             elif style.startswith("List"):
@@ -122,9 +143,12 @@ def parse_docx(path: Path) -> list[Block]:
     return blocks
 
 
-# --------------------------------------------------------------------- pdf
-
+# =====================================================================
+# BLOQUE: PDF
+# Texto y tablas se extraen por separado y luego se ordenan por su posición vertical en la página.
+# =====================================================================
 def parse_pdf(path: Path) -> list[Block]:
+    """Lee un PDF: tablas reconstruidas por coordenadas, texto por líneas, sin encabezados repetidos ni pies de página."""
     with pdfplumber.open(str(_require(path))) as pdf:
         page_lines = [_page_lines(page) for page in pdf.pages]
         repeated = _repeated_texts(page_lines)
@@ -139,7 +163,7 @@ def parse_pdf(path: Path) -> list[Block]:
 
 
 def _page_lines(page) -> list[dict]:
-    """Text lines of the page, excluding whatever lies inside a table."""
+    """Líneas de texto de la página, sin lo que está dentro de una tabla (esa parte la maneja _table_rows)."""
     boxes = [t.bbox for t in page.find_tables()]
 
     def outside_tables(obj) -> bool:
@@ -156,7 +180,7 @@ def _page_lines(page) -> list[dict]:
 
 
 def _repeated_texts(page_lines: list[list[dict]]) -> set[str]:
-    """Running headers: identical lines that appear on every page of a multi-page document."""
+    """Encabezados repetidos: líneas idénticas que aparecen en todas las páginas de un documento de varias páginas."""
     if len(page_lines) < 2:
         return set()
     per_page = [{l["text"] for l in lines} for lines in page_lines]
@@ -164,11 +188,13 @@ def _repeated_texts(page_lines: list[list[dict]]) -> set[str]:
 
 
 def _assemble_text(lines: list[dict], page_number: int) -> list[tuple[float, Block]]:
+    """Agrupa líneas en bloques: el tamaño de letra marca título o encabezado; el resto se une en párrafos."""
     items: list[tuple[float, Block]] = []
     current: dict | None = None
     previous: dict | None = None
 
     def flush():
+        """Cierra el párrafo acumulado."""
         nonlocal current
         if current:
             items.append((current["top"], Block("paragraph", current["text"], page=page_number)))
@@ -177,7 +203,7 @@ def _assemble_text(lines: list[dict], page_number: int) -> list[tuple[float, Blo
     for line in lines:
         if line["size"] >= _TITLE_SIZE:
             flush()
-            if page_number == 1:   # later pages repeat a subtitle that is only layout
+            if page_number == 1:   # las páginas siguientes repiten un subtítulo que es solo maquetación
                 items.append((line["top"], Block("title", line["text"], page=page_number)))
         elif line["size"] >= _HEADING_SIZE:
             flush()
@@ -200,18 +226,19 @@ def _assemble_text(lines: list[dict], page_number: int) -> list[tuple[float, Blo
 
 
 def _table_rows(page, table) -> list[list[str]]:
-    """Rebuild table cells from word coordinates.
+    """Reconstruye las celdas de una tabla a partir de las coordenadas de las palabras.
 
-    The PDF tables come out of extraction as one string per row, and a cell that wraps over
-    two lines can sit between the lines of its neighbours. Instead: rows come from the row
-    bands detected by pdfplumber, columns from where each header cell starts (cells are
-    left-aligned, so a column begins at the same x as its header), and each word is assigned
-    to the column in which it starts.
+    La extracción normal entrega cada fila como un solo texto, y una celda que ocupa dos líneas
+    puede quedar entre las líneas de sus vecinas. Por eso: las filas salen de las bandas que detecta
+    pdfplumber, las columnas de dónde empieza cada celda del encabezado (las celdas están alineadas
+    a la izquierda, así que la columna empieza en la misma x que su encabezado) y cada palabra se
+    asigna a la columna en la que empieza.
     """
     words = page.within_bbox(table.bbox).extract_words()
     bands = [row.bbox for row in table.rows]
 
     def words_in(band):
+        """Palabras cuyo centro vertical cae dentro de la banda (fila)."""
         return [w for w in words if band[1] <= (w["top"] + w["bottom"]) / 2 <= band[3]]
 
     boundaries = _column_boundaries(words_in(bands[0]))
@@ -225,6 +252,7 @@ def _table_rows(page, table) -> list[list[str]]:
 
 
 def _column_boundaries(header_words: list[dict]) -> list[float]:
+    """Posiciones x que separan columnas: une las palabras cercanas del encabezado y corta donde hay un hueco."""
     intervals = sorted((w["x0"], w["x1"]) for w in header_words)
     merged = [list(intervals[0])]
     for start, end in intervals[1:]:
@@ -236,17 +264,19 @@ def _column_boundaries(header_words: list[dict]) -> list[float]:
 
 
 def _cell_text(words: list[dict]) -> str:
+    """Texto de una celda: palabras ordenadas por línea (de arriba a abajo) y de izquierda a derecha."""
     ordered = sorted(words, key=lambda w: (round(w["top"] / 3), w["x0"]))
     return _clean(" ".join(w["text"] for w in ordered))
 
 
-# ---------------------------------------------- structured data from tables
-
+# =====================================================================
+# BLOQUE: Datos estructurados de tablas
+# =====================================================================
 _NUMBER_PCT = re.compile(r"([+\-−–]?)\s*(\d+(?:[.,]\d+)?)\s*%")
 
 
 def parse_reported_regional_variation(path: Path) -> dict[str, float]:
-    """Regional variations (% T2 vs T1) stated in the commercial report's table."""
+    """Variaciones regionales (% T2 vs T1) que declara la tabla del reporte comercial."""
     for block in parse_pdf(path):
         if block.kind != "table" or not any("Variación" in cell for cell in block.rows[0]):
             continue

@@ -1,8 +1,12 @@
-"""The question-answering pipeline: plan -> compute -> retrieve -> write -> validate.
+"""
+SERVICIO: EL FLUJO COMPLETO DE UNA PREGUNTA
 
-`ask()` returns the checked answer together with a full trace (plan, calculations with their
-formulas, evidence used, what the validator discarded, timings, warnings) so every figure and
-every citation can be verified.
+Qué hace: orquesta todo el recorrido planificar -> calcular -> recuperar evidencia -> redactar -> validar.
+Con qué se conecta: es el centro de la app. Lo usan la API web (api/main.py) y la línea de comandos
+(cli.py); él usa todos los demás módulos.
+Idea clave: `ask()` devuelve la respuesta ya verificada junto con la TRAZA completa (plan, cálculos con sus
+fórmulas, evidencia usada, lo que descartó el validador, tiempos y avisos), de modo que cada cifra y cada
+cita se pueden comprobar.
 """
 import time
 from dataclasses import dataclass, field
@@ -26,14 +30,23 @@ from analyst.llm.schemas import Answer, Plan
 from analyst.rag.retriever import HybridRetriever, RetrievedChunk, build_default_retriever
 from analyst.security.injection import ScreeningResult
 
+# =====================================================================
+# BLOQUE: Constantes
+# =====================================================================
 MAX_QUESTION_CHARS = 1000
 REPORT_FILENAME = "05_Reporte_Comercial.pdf"
+# En preguntas de causalidad siempre se busca también la evidencia sobre lo que los estudios NO pueden mostrar.
 CAUSALITY_QUERY = "causalidad grupo de control diseño experimental no medido promociones"
 CAUSALITY_EXTRA_CHUNKS = 3
 
 
+# =====================================================================
+# BLOQUE: Estructuras de resultado
+# =====================================================================
 @dataclass
 class EvidenceRef:
+    """Fragmento de evidencia tal como se entrega a la interfaz (con el puesto que le dio cada buscador)."""
+
     chunk_id: str
     doc: str
     doc_title: str
@@ -46,19 +59,22 @@ class EvidenceRef:
 
     @classmethod
     def from_retrieved(cls, item: RetrievedChunk) -> "EvidenceRef":
+        """Crea la referencia a partir de un fragmento recuperado."""
         c = item.chunk
         return cls(c.chunk_id, c.doc, c.doc_title, c.section, c.page, c.regions, c.kind, item.ranks, c.text)
 
 
 @dataclass
 class AskResult:
+    """Todo lo que devuelve una pregunta: respuesta final, lo que escribió el modelo y la traza para verificar."""
+
     question: str
     plan: Plan
-    plan_source: str                       # "llm" or "fallback"
+    plan_source: str                       # "llm" o "fallback" (plan por defecto)
     calc: list[CalcBlock]
     evidence: list[EvidenceRef]
-    answer: Answer                         # what the model wrote, as it came
-    final: FinalAnswer                     # what the analyst sees: checked, with what was discarded and why
+    answer: Answer                         # lo que escribió el modelo, tal cual
+    final: FinalAnswer                     # lo que ve el analista: verificado, con lo descartado y por qué
     timings: dict[str, float]
     warnings: list[str]
     quality_notes: list[dict]
@@ -68,6 +84,7 @@ class AskResult:
     tokens: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
+        """Versión lista para JSON (la que consume la interfaz)."""
         return {
             "question": self.question, "plan": self.plan.model_dump(), "plan_source": self.plan_source,
             "calc": [{"calc_id": b.calc_id, "title": b.title, "text": b.text, "spec": b.spec, "result": b.result}
@@ -79,7 +96,12 @@ class AskResult:
         }
 
 
+# =====================================================================
+# BLOQUE: Servicio
+# =====================================================================
 class AnalystService:
+    """Une el analizador de ventas, el buscador de evidencia y el modelo en un solo flujo."""
+
     def __init__(self, analyzer: SalesAnalyzer, retriever: HybridRetriever, llm: StructuredLLM,
                  quality_report: QualityReport | None = None, screening: ScreeningResult | None = None,
                  reported_variation: dict[str, float] | None = None, corpus_chunks: list[Chunk] | None = None):
@@ -91,28 +113,31 @@ class AnalystService:
 
     @property
     def document_count(self) -> int:
+        """Cantidad de fragmentos de documentos disponibles."""
         return len(self._corpus_chunks)
 
     def get_chunk(self, chunk_id: str) -> Chunk | None:
-        """A fragment of the screened corpus. Quarantined fragments are not in it, so they are never served."""
+        """Un fragmento del corpus ya revisado. Los de cuarentena no están, así que nunca se entregan."""
         return self._chunks_by_id.get(chunk_id)
 
     def warm_up(self) -> None:
-        """Load the models into memory so the first real question is not slow."""
+        """Carga los modelos en memoria para que la primera pregunta real no sea lenta."""
         self._retriever.retrieve("calentamiento", top_k=1, mode=settings.retrieval_mode)
         warm = getattr(self._llm, "warm_up", None)
         if warm:
             warm()
 
     def data_quality(self) -> dict:
+        """Reporte de calidad de datos para el panel."""
         return self._quality_report.to_dict() if self._quality_report else {}
 
     def security_alerts(self) -> list[dict]:
+        """Fragmentos en cuarentena o con advertencia, para el panel de seguridad."""
         return [f.to_dict() for f in (self._screening.quarantined + self._screening.warnings)] if self._screening else []
 
     def ask(self, question: str, mode: str | None = None, top_k: int = 6,
             progress: Callable[[str], None] | None = None) -> AskResult:
-        """`progress`, if given, is called with the name of each step as it starts."""
+        """Responde una pregunta. `progress`, si se da, se llama con el nombre de cada paso al comenzar."""
         mode = mode or settings.retrieval_mode
         notify = progress or (lambda step: None)
         question = question.strip()
@@ -124,6 +149,7 @@ class AnalystService:
         timings: dict[str, float] = {}
         warnings: list[str] = []
 
+        # Paso 1 - Planificación: el modelo elige qué calcular (dentro de un catálogo cerrado).
         notify("planificacion")
         t = time.perf_counter()
         planned = plan_question(self._llm, question)
@@ -131,12 +157,14 @@ class AnalystService:
         warnings += [f"Planificador: {n}" for n in planned.notes]
         plan = planned.plan
 
+        # Fuera de alcance: respuesta fija, sin cálculos ni más llamadas al modelo.
         if plan.tipo == "fuera_de_alcance":
             timings["total"] = time.perf_counter() - started
             answer = out_of_scope_answer()
             return AskResult(question, plan, planned.source, [], [], answer, FinalAnswer.unchecked(answer), timings,
                              warnings, [], mode, self._llm.name)
 
+        # Paso 2 - Cálculo: pandas calcula las cifras (y el contraste con el reporte si corresponde).
         notify("calculo")
         t = time.perf_counter()
         calc = build_calc_blocks(self._analyzer, plan)
@@ -144,6 +172,7 @@ class AnalystService:
         timings["calculo"] = time.perf_counter() - t
         quality_notes = calc[0].result["quality_notes"] if calc else []
 
+        # Paso 3 - Recuperación: solo si el plan necesita documentos.
         items: list[RetrievedChunk] = []
         if plan.usar_documentos:
             notify("recuperacion")
@@ -155,6 +184,7 @@ class AnalystService:
                 items = self._with_limitations(items, mode)
             timings["recuperacion"] = time.perf_counter() - t
 
+        # Armado del prompt ajustado a la ventana de contexto del modelo.
         num_ctx = getattr(self._llm, "num_ctx", 4096)
         bundle = build_answer_prompt(question, calc, items, quality_notes, use_documents=plan.usar_documentos,
                                      num_ctx=num_ctx, max_output_tokens=ANSWER_MAX_TOKENS)
@@ -162,12 +192,14 @@ class AnalystService:
             warnings.append(f"Se recortaron {bundle.evidence_dropped} fragmentos de evidencia para caber en el "
                             f"contexto del modelo ({num_ctx} tokens).")
 
+        # Paso 4 - Redacción: el modelo escribe la respuesta estructurada.
         notify("redaccion")
         t = time.perf_counter()
         generated = answer_question(self._llm, bundle)
         timings["redaccion"] = time.perf_counter() - t
         warnings += [f"Redactor: {n}" for n in generated.info.notes]
 
+        # Paso 5 - Validación: el código verifica lo que escribió el modelo y arma la respuesta final.
         notify("validacion")
         t = time.perf_counter()
         context = ValidationContext(calc, [i.chunk for i in bundle.evidence_used], plan.tipo, contrast,
@@ -183,7 +215,7 @@ class AnalystService:
             {"prompt": generated.info.prompt_tokens, "salida": generated.info.output_tokens})
 
     def _contrast(self, plan: Plan, calc: list[CalcBlock], warnings: list[str]) -> ReportContrast | None:
-        """For questions about the commercial report: compare it with the data in code, and hand the verdict to the model."""
+        """Para preguntas sobre el reporte comercial: lo compara con los datos en código y pasa el veredicto al modelo."""
         if plan.tipo != "contraste_reporte":
             return None
         if not self._reported:
@@ -194,20 +226,23 @@ class AnalystService:
         return contrast
 
     def _with_limitations(self, items: list[RetrievedChunk], mode: str) -> list[RetrievedChunk]:
-        """Causality questions always get the evidence about what the studies cannot show."""
+        """Las preguntas de causalidad siempre reciben la evidencia sobre lo que los estudios no pueden mostrar."""
         extra = self._retriever.retrieve(CAUSALITY_QUERY, top_k=CAUSALITY_EXTRA_CHUNKS, mode=mode).items
         known = {i.chunk.chunk_id for i in items}
         return items + [i for i in extra if i.chunk.chunk_id not in known]
 
 
+# =====================================================================
+# BLOQUE: Construcción por defecto
+# =====================================================================
 def build_default_service() -> AnalystService:
-    """Loads and cleans the data, screens and indexes the documents, and connects to Ollama."""
+    """Carga y limpia los datos, revisa e indexa los documentos y conecta con Ollama."""
     cleaned = load_clean_sales()
     retriever, screening = build_default_retriever()
     try:
         reported = parse_reported_regional_variation(settings.raw_data_dir / REPORT_FILENAME)
     except (OSError, ValueError):
-        reported = None     # the contrast is then reported as unavailable instead of failing the whole app
+        reported = None     # el contraste se reporta entonces como no disponible, en vez de fallar toda la app
     return AnalystService(SalesAnalyzer(cleaned.data, cleaned.report), retriever, OllamaChat(),
                           cleaned.report, screening, reported, screening.safe)
 

@@ -1,4 +1,10 @@
-"""Shared test doubles: a fake embedder, a fake structured LLM and a chunk factory."""
+"""
+AYUDANTES COMPARTIDOS DE LAS PRUEBAS
+
+Qué contiene: dobles de prueba que reemplazan a Ollama (un generador de vectores falso y un modelo
+falso con plan y respuesta fijos) y una fábrica de fragmentos.
+Para qué sirven: permiten probar todo el flujo rápido y sin Ollama, con resultados repetibles.
+"""
 import zlib
 
 import numpy as np
@@ -11,12 +17,13 @@ from analyst.rag.lexical import tokenize
 
 
 def make_chunk(chunk_id, text, regions=None, kind="texto") -> Chunk:
+    """Crea un fragmento mínimo para las pruebas."""
     return Chunk(chunk_id=chunk_id, doc="d.md", doc_title="Doc", doc_type="t", section="S", kind=kind,
                  text=text, embed_text="Doc | S\n" + text, regions=regions or [])
 
 
 class FakeEmbedder:
-    """Deterministic bag-of-words vectors; counts calls so caching can be tested."""
+    """Vectores deterministas por bolsa de palabras; cuenta las llamadas para poder probar la caché."""
     def __init__(self, name="fake-model", fail=False):
         self._name, self.fail = name, fail
         self.document_calls = self.query_calls = 0
@@ -45,7 +52,7 @@ class FakeEmbedder:
 
 
 class FakeLLM:
-    """Plays a fixed plan and answer; records every prompt it receives."""
+    """Entrega un plan y una respuesta fijos y registra cada prompt que recibe."""
     name = "fake-llm"
 
     def __init__(self, plan=None, answer=None, plan_error=None, answer_error=None, plan_notes=None,

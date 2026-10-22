@@ -1,8 +1,11 @@
-"""Tests for the guardrails: facts written by code, the report-vs-data contrast and the validator.
+"""
+PRUEBAS DE LOS GUARDRAILS
 
-Many tests replay failures seen in real runs of the model (a hypothesis citing only a calculation,
-"no contradictions" when the report is wrong, a claim attributed to the wrong region, an invented
-source) and check that the final answer no longer contains them.
+Qué verifica: guardrails/facts.py (hechos escritos por código), report_check.py (contraste reporte-datos) y
+validator.py (reglas sobre lo que escribe el modelo).
+Cómo: muchas pruebas REPITEN fallos vistos en ejecuciones reales del modelo (una hipótesis que cita solo un cálculo,
+"no hay contradicciones" cuando el reporte está mal, una afirmación atribuida a la región equivocada, una fuente
+inventada) y comprueban que la respuesta final ya no los contiene.
 """
 import io
 
@@ -25,49 +28,60 @@ from analyst.service import AnalystService
 from tests.helpers import FakeEmbedder, FakeLLM
 
 
-# ------------------------------------------------------------------ fixtures
+# =====================================================================
+# BLOQUE: Fixtures y constructores de ejemplo
+# =====================================================================
 
 @pytest.fixture(scope="module")
 def cleaned():
+    """Datos reales limpios."""
     return load_clean_sales()
 
 
 @pytest.fixture(scope="module")
 def analyzer(cleaned):
+    """Analizador sobre los datos reales."""
     return SalesAnalyzer(cleaned.data, cleaned.report)
 
 
 @pytest.fixture(scope="module")
 def corpus():
+    """Corpus real de documentos ya revisado."""
     return load_safe_corpus()
 
 
 @pytest.fixture(scope="module")
 def chunks(corpus):
+    """Fragmentos seguros del corpus."""
     return {c.chunk_id: c for c in corpus.safe}
 
 
 @pytest.fixture(scope="module")
 def reported():
+    """Variaciones regionales que declara el reporte."""
     return parse_reported_regional_variation(settings.raw_data_dir / "05_Reporte_Comercial.pdf")
 
 
 @pytest.fixture(scope="module")
 def contrast(analyzer, reported, corpus):
+    """Contraste calculado entre el reporte y los datos."""
     return compare_report_to_data(analyzer, reported, corpus.safe)
 
 
 def spec(**kw) -> AnalysisSpec:
+    """Cálculo de ejemplo con valores por defecto."""
     base = {"agrupar_por": ["region"], "metrica": "venta_neta_cop", "region": "todas", "canal": "todos",
             "presentacion": "todas"}
     return AnalysisSpec(**{**base, **kw})
 
 
 def region_blocks(analyzer):
+    """Bloque de cálculo por región sobre los datos reales."""
     return build_calc_blocks(analyzer, Plan(tipo="cuantitativa", analisis=[spec()], usar_documentos=False))
 
 
 def answer(resumen="Resumen.", hechos=(), hipotesis=(), contradicciones=(), insuficiente=()) -> Answer:
+    """Respuesta de modelo de ejemplo para alimentar al validador."""
     claims = lambda items: [{"texto": t, "fuentes": s} for t, s in items]
     return Answer.model_validate({"resumen": resumen, "hechos": claims(hechos), "hipotesis": claims(hipotesis),
                                   "contradicciones": claims(contradicciones),
@@ -75,22 +89,25 @@ def answer(resumen="Resumen.", hechos=(), hipotesis=(), contradicciones=(), insu
 
 
 def context(analyzer, chunks, ids=(), plan_type="cuantitativa", contrast=None) -> ValidationContext:
+    """Contexto de validación con la evidencia de los ids indicados."""
     blocks = region_blocks(analyzer)
     if contrast:
         blocks.append(CalcBlock(CONTRAST_ID, contrast.title, contrast.text, contrast.to_dict(), {}))
     return ValidationContext(blocks, [chunks[i] for i in ids], plan_type, contrast, tuple(analyzer.columns))
 
 
-# ------------------------------------------------------------------- figures
+# =====================================================================
+# BLOQUE: Verificación de cifras
+# =====================================================================
 
 @pytest.mark.parametrize("claim,source", [
     ("Sur cayó -30,27 %", "Sur: variación -110.027.000 (-30,27 %)"),
-    ("Sur cayó 30.27 %", "(-30,27 %)"),                                       # decimal point instead of comma
+    ("Sur cayó 30.27 %", "(-30,27 %)"),                                       # punto decimal en vez de coma
     ("Pasó de 363.431.600 a 253.404.600", "T1 363.431.600 | T2 253.404.600"),
-    ("Cayó cerca de un 30,3 %", "(-30,27 %)"),                                  # rounded by the model
+    ("Cayó cerca de un 30,3 %", "(-30,27 %)"),                                  # redondeado por el modelo
     ("Cayó 30 %", "(-30,27 %)"),
-    ("La cifra CALC-1 de 2026 abarca 5 regiones en T1 y T2", "nada"),           # ids, years, single digits
-    ("Creció 4,65 %", "(-4,65 %)"),                                             # sign is ignored
+    ("La cifra CALC-1 de 2026 abarca 5 regiones en T1 y T2", "nada"),           # ids, años, dígitos sueltos
+    ("Creció 4,65 %", "(-4,65 %)"),                                             # el signo se ignora
 ])
 def test_supported_figures_are_accepted(claim, source):
     assert figures_supported(claim, [source]) == []
@@ -100,7 +117,9 @@ def test_invented_figures_are_found():
     assert figures_supported("Sur cayó 35,1 % y 21 millones", ["(-30,27 %)"]) == ["35.1", "21"]
 
 
-# --------------------------------------------------------------------- facts
+# =====================================================================
+# BLOQUE: Hechos escritos por código
+# =====================================================================
 
 def test_facts_are_complete_sentences_written_from_the_calculation(analyzer):
     facts = calc_facts(region_blocks(analyzer))
@@ -131,7 +150,9 @@ def test_facts_carry_the_filters(analyzer):
     assert "por canal (region = Sur)" in calc_facts(blocks)[0].texto
 
 
-# ------------------------------------------------------------------ contrast
+# =====================================================================
+# BLOQUE: Contraste con el reporte
+# =====================================================================
 
 def test_contrast_with_the_real_report(contrast):
     by_region = {r.region: r for r in contrast.rows}
@@ -177,7 +198,9 @@ def test_a_report_that_matches_the_data_is_consistent(analyzer, corpus):
     assert result.consistent and result.verdict.startswith("El reporte es consistente") and result.contradictions == []
 
 
-# ----------------------------------------------- validator: failures replayed
+# =====================================================================
+# BLOQUE: Validador: fallos reales repetidos
+# =====================================================================
 
 def test_replayed_run_a_hypothesis_citing_only_a_calculation_is_discarded(analyzer, chunks):
     bad = answer("La región con mayor caída fue el Sur, con una variación de -30,27 %.",
@@ -187,8 +210,8 @@ def test_replayed_run_a_hypothesis_citing_only_a_calculation_is_discarded(analyz
     assert final.hipotesis == []
     assert [d.seccion for d in final.descartes] == ["hipotesis"]
     assert "no cita ningún documento" in final.descartes[0].motivo
-    assert final.hechos[0].origen == "calculo" and "Sur" in final.hechos[0].texto      # code's fact, with its subject
-    assert all(h.origen == "calculo" for h in final.hechos)                               # the model's version is redundant
+    assert final.hechos[0].origen == "calculo" and "Sur" in final.hechos[0].texto      # hecho del código, con su sujeto
+    assert all(h.origen == "calculo" for h in final.hechos)                               # la versión del modelo es redundante
     assert final.resumen.startswith("La región con mayor caída fue el Sur") and final.resumen_origen == "modelo"
 
 
@@ -214,8 +237,8 @@ def test_replayed_run_the_code_decides_the_contrast_whatever_the_model_says(anal
                  contradicciones=[("No se encontraron contradicciones entre fuentes.", ["CALC-1"])])
     final = validate_answer(bad, context(analyzer, chunks, plan_type="contraste_reporte", contrast=contrast))
     assert final.resumen == contrast.verdict and final.resumen_origen == "contraste"
-    assert [c.origen for c in final.contradicciones] == ["contraste"] * 3        # the model's own add nothing
-    assert final.descartes == []                                                   # skipped as redundant, not an error
+    assert [c.origen for c in final.contradicciones] == ["contraste"] * 3        # las del modelo no agregan nada
+    assert final.descartes == []                                                   # se omite por redundante, no es un error
 
 
 def test_saying_there_are_no_contradictions_is_discarded_when_the_contrast_found_them(analyzer, chunks, contrast):
@@ -236,7 +259,9 @@ def test_an_absence_of_consumer_data_is_true_and_kept(analyzer, chunks):
     assert len(validate_answer(ok, context(analyzer, chunks)).insuficiente) == 1
 
 
-# --------------------------------------------------- validator: the rules
+# =====================================================================
+# BLOQUE: Validador: las reglas
+# =====================================================================
 
 def test_a_figure_not_in_the_cited_source_is_discarded(analyzer, chunks):
     ctx = context(analyzer, chunks, ["INV-01"])
@@ -281,7 +306,7 @@ def test_a_summary_that_contradicts_the_calculations_is_replaced(analyzer, chunk
 
 @pytest.mark.parametrize("summary", [
     "El Sur tuvo la mayor caída (-30,27 %), seguido de Centro.",
-    "Según el reporte, Centro es la mayor caída.",           # about the report: checked by the contrast, not here
+    "Según el reporte, Centro es la mayor caída.",           # habla del reporte: lo verifica el contraste, no aquí
     "No se puede afirmar que las promociones causaron la caída.",
 ])
 def test_a_faithful_summary_is_kept(analyzer, chunks, summary):
@@ -315,9 +340,12 @@ def test_unchecked_answer_for_out_of_scope_questions():
     assert unchecked.descartes == []
 
 
-# ------------------------------------------------------ the service end to end
+# =====================================================================
+# BLOQUE: El servicio de extremo a extremo
+# =====================================================================
 
 @pytest.fixture
+# Fábrica de servicios con un modelo falso configurable.
 def make_service(cleaned, analyzer, corpus, reported, tmp_path):
     def build(llm):
         retriever = HybridRetriever(corpus.safe, FakeEmbedder(), tmp_path)
@@ -330,22 +358,22 @@ def test_service_a_model_that_obeys_an_injection_cannot_change_the_headline(make
     llm = FakeLLM(plan=plan, answer=answer("Centro tuvo la mayor caída de ventas.",
                                            hechos=[("Centro cayó más que ninguna otra región.", ["CALC-1"])]))
     result = make_service(llm).ask("¿Cuál fue la región con mayor caída?")
-    assert result.answer.resumen == "Centro tuvo la mayor caída de ventas."          # what the model wrote, kept for audit
+    assert result.answer.resumen == "Centro tuvo la mayor caída de ventas."          # lo que escribió el modelo, conservado para auditoría
     assert "Sur" in result.final.resumen and "Centro tuvo" not in result.final.resumen
     assert result.final.descartes[0].motivo.startswith("nombra a Centro como la región de mayor caída")
 
 
 def test_service_contrast_question_gets_the_codes_verdict_whatever_the_model_says(make_service):
     plan = Plan(tipo="contraste_reporte", usar_documentos=True,
-                analisis=[spec(agrupar_por=["region", "canal"])])             # the model asked for region x channel
+                analisis=[spec(agrupar_por=["region", "canal"])])             # el modelo pidió región x canal
     llm = FakeLLM(plan=plan, answer=answer("Sí, es consistente.", contradicciones=[("No se encontraron contradicciones.", ["CALC-1"])]))
     result = make_service(llm).ask("¿Son consistentes las conclusiones del reporte comercial con los datos de ventas?")
-    assert result.plan.analisis[0].agrupar_por == ["region"]                      # forced to the report's granularity
+    assert result.plan.analisis[0].agrupar_por == ["region"]                      # forzado a la granularidad del reporte
     assert [b.calc_id for b in result.calc] == ["CALC-1", "CONTRASTE-1"]
     assert "[CONTRASTE-1]" in llm.calls[1]["user"] and "NO coincide" in llm.calls[1]["user"]
     assert result.final.resumen.startswith("El reporte NO es consistente con los datos")
     assert len(result.final.contradicciones) == 3 and result.contrast["consistent"] is False
-    assert result.final.descartes == []          # the model's own contradictions only repeat the code's: skipped
+    assert result.final.descartes == []          # las contradicciones del modelo solo repiten las del código: se omiten
 
 
 def test_service_contrast_without_the_report_table_says_so(cleaned, analyzer, corpus, tmp_path):
@@ -381,7 +409,9 @@ def test_the_result_includes_the_model_answer_the_final_answer_and_the_contrast(
     assert data["final"]["contradicciones"] and data["contrast"]["rows"]
 
 
-# ---------------------------------------------- holes found in real runs, closed
+# =====================================================================
+# BLOQUE: Huecos encontrados en ejecuciones reales, ya cerrados
+# =====================================================================
 
 def test_a_general_document_cannot_back_a_claim_about_a_region(analyzer, chunks):
     final = validate_answer(answer(hipotesis=[("La competencia puede haber influido, especialmente en la región Sur.", ["REP-02"])]),
@@ -406,7 +436,9 @@ def test_a_false_absence_of_the_sales_base_is_discarded(analyzer, chunks):
     assert final.insuficiente == [] and "los cálculos se hicieron con ella" in final.descartes[0].motivo
 
 
-# ---------------------------------------- holes found in an open question, closed
+# =====================================================================
+# BLOQUE: Huecos encontrados en una pregunta abierta, ya cerrados
+# =====================================================================
 
 def test_similar_drops_are_not_presented_as_a_largest_drop(analyzer):
     blocks = build_calc_blocks(analyzer, Plan(tipo="integrada", usar_documentos=True,

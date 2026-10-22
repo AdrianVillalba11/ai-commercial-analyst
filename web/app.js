@@ -1,6 +1,22 @@
 "use strict";
-/* Everything that comes from the server (documents, model output) is rendered as plain text:
-   nodes are built with textContent, never from HTML strings. */
+/*
+  LÓGICA DE LA PÁGINA
+
+  Qué hace: envía la pregunta a la API, muestra el avance paso a paso y dibuja la respuesta en tarjetas.
+  Con qué se conecta: consume los endpoints de src/analyst/api/main.py (/api/ask/stream, /api/health,
+  /api/quality, /api/security, /api/evidence/...) y dibuja dentro de web/index.html.
+  Idea clave de seguridad: todo lo que viene del servidor (documentos, texto del modelo) se muestra como
+  TEXTO PLANO: los nodos se crean con textContent, nunca a partir de cadenas HTML. Así un documento
+  malicioso no puede ejecutar nada en la página.
+
+  Bloques: constantes y formato -> ayudantes -> estado -> progreso -> preguntar -> fuentes -> tarjetas
+  de la respuesta -> panel lateral -> arranque.
+*/
+
+/* =====================================================================
+   BLOQUE: Constantes y formato de números
+   ===================================================================== */
+/* Preguntas de ejemplo: [etiqueta del botón, pregunta completa]. */
 
 const EXAMPLES = [
   ["Región con mayor caída",
@@ -12,6 +28,7 @@ const EXAMPLES = [
   ["¿Causaron las promociones la caída?",
    "¿Podemos afirmar que las promociones de la competencia causaron la caída de ventas? ¿Qué evidencia lo sustenta o limita?"],
 ];
+/* Texto que se muestra en cada paso del progreso. */
 const STEPS = {
   planificacion: "Planificando la consulta",
   calculo: "Calculando con los datos",
@@ -19,10 +36,13 @@ const STEPS = {
   redaccion: "Redactando la respuesta",
   validacion: "Verificando la respuesta",
 };
+/* Etiquetas legibles para el origen de cada afirmación y el modo de búsqueda. */
 const ORIGINS = { calculo: "Cálculo", documento: "Documento", contraste: "Contraste", modelo: "Modelo" };
 const MODES = { semantic: "semántica", hybrid: "híbrida", lexical: "léxica" };
 
+/* Atajo para buscar un elemento por su id. */
 const $ = (id) => document.getElementById(id);
+/* Formatos numéricos colombianos: punto para miles y coma para decimales. */
 const intFormat = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 });
 const pctFormat = new Intl.NumberFormat("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtNum = (n) => intFormat.format(n);
@@ -30,8 +50,11 @@ const fmtPct = (n) => (n === null || n === undefined ? "—" : `${pctFormat.form
 const fmtPp = (n) => `${n > 0 ? "+" : ""}${pctFormat.format(n)} pp`;
 const fmtSec = (s) => `${pctFormat.format(s).replace(",00", "")} s`;
 
-/* ---------------------------------------------------------------- helpers */
+/* =====================================================================
+   BLOQUE: Ayudantes
+   ===================================================================== */
 
+/* Crea un elemento: clase, texto (con textContent), atributos y hijos. Los hijos nulos se ignoran. */
 function el(tag, options = {}, ...children) {
   const node = document.createElement(tag);
   if (options.class) node.className = options.class;
@@ -41,6 +64,7 @@ function el(tag, options = {}, ...children) {
   return node;
 }
 
+/* Saca el mensaje de error que envió el servidor; si no hay uno legible, devuelve uno genérico. */
 async function readError(response) {
   try {
     const body = await response.json();
@@ -49,14 +73,18 @@ async function readError(response) {
   return `La aplicación respondió con un error (${response.status}).`;
 }
 
+/* GET que devuelve el JSON, o lanza un error con el mensaje del servidor. */
 async function getJson(url) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(await readError(response));
   return response.json();
 }
 
-/* ------------------------------------------------------------------ status */
+/* =====================================================================
+   BLOQUE: Estado de Ollama (indicador de la barra superior)
+   ===================================================================== */
 
+/* Cambia el color y el texto del indicador de estado. */
 function setStatus(kind, text, hint) {
   const chip = $("status");
   chip.className = `status status-${kind}`;
@@ -64,6 +92,7 @@ function setStatus(kind, text, hint) {
   chip.title = hint || "";
 }
 
+/* Consulta /api/health y actualiza el indicador; se repite sola (cada 2 s mientras calienta, si no cada 20 s). */
 async function refreshStatus() {
   let next = 20000;
   try {
@@ -89,10 +118,13 @@ async function refreshStatus() {
   setTimeout(refreshStatus, next);
 }
 
-/* ---------------------------------------------------------------- progress */
+/* =====================================================================
+   BLOQUE: Progreso mientras se responde
+   ===================================================================== */
 
 let timer = null;
 
+/* Muestra la tarjeta de progreso y arranca el contador de segundos. */
 function startProgress() {
   $("steps").replaceChildren();
   $("progress").hidden = false;
@@ -103,18 +135,24 @@ function startProgress() {
   }, 200);
 }
 
+/* Marca como hecho el paso anterior y agrega el nuevo como activo. */
 function onStep(step) {
   for (const item of $("steps").querySelectorAll("li.active")) item.className = "done";
   $("steps").append(el("li", { class: "active", text: STEPS[step] || step }));
 }
 
+/* Detiene el contador y oculta el progreso. */
 function stopProgress() {
   clearInterval(timer);
-  $("progress").hidden = true;      // hidden before the answer is drawn, so the page does not shift afterwards
+  $("progress").hidden = true;      // se oculta antes de dibujar la respuesta, para que la página no se desplace después
 }
 
-/* --------------------------------------------------------------- asking */
+/* =====================================================================
+   BLOQUE: Preguntar (conexión SSE con el servidor)
+   El servidor envía eventos: 'step' (avance), 'result' (respuesta) o 'error'.
+   ===================================================================== */
 
+/* Convierte un bloque de texto SSE en {event, data}; devuelve null si no trae datos. */
 function parseFrame(frame) {
   let event = "message";
   const data = [];
@@ -125,6 +163,7 @@ function parseFrame(frame) {
   return data.length ? { event, data: JSON.parse(data.join("\n")) } : null;
 }
 
+/* Envía la pregunta y lee los eventos a medida que llegan; devuelve el resultado final. */
 async function streamAsk(question, mode) {
   const response = await fetch("/api/ask/stream", {
     method: "POST",
@@ -152,12 +191,14 @@ async function streamAsk(question, mode) {
   throw new Error("La conexión se cerró antes de terminar la respuesta.");
 }
 
+/* Muestra un mensaje de error en el recuadro rojo. */
 function showError(message) {
   const box = $("error");
   box.textContent = message;
   box.hidden = false;
 }
 
+/* Flujo completo al pulsar "Preguntar": valida, muestra progreso, pide, y dibuja la respuesta o el error. */
 async function ask() {
   const question = $("question").value.trim();
   $("error").hidden = true;
@@ -177,14 +218,18 @@ async function ask() {
   }
 }
 
-/* ------------------------------------------------------------ source chips */
+/* =====================================================================
+   BLOQUE: Fuentes citadas (botones con el id de cada fuente)
+   ===================================================================== */
 
+/* Botón con el id de una fuente; al hacer clic se abre. */
 function sourceChip(id) {
   const chip = el("button", { class: "chip", text: id, attrs: { type: "button", title: "Ver la fuente" } });
   chip.addEventListener("click", () => openSource(id));
   return chip;
 }
 
+/* Si la fuente es un cálculo (CALC-n) o el contraste, salta a su tarjeta; si es un documento, abre su texto original. */
 function openSource(id) {
   const isCalc = id.startsWith("CALC-") || id.startsWith("CONTRASTE-");
   if (isCalc) {
@@ -201,12 +246,16 @@ function openSource(id) {
   showEvidence(id);
 }
 
-/* ------------------------------------------------------------ answer cards */
+/* =====================================================================
+   BLOQUE: Tarjetas de la respuesta
+   ===================================================================== */
 
+/* Etiqueta de color con el origen de una afirmación (cálculo, documento, contraste, modelo). */
 function badge(origin) {
   return el("span", { class: `badge badge-${origin}`, text: ORIGINS[origin] || origin });
 }
 
+/* Tarjeta con una lista de afirmaciones y sus fuentes; devuelve null si la lista está vacía. */
 function claimsCard(title, subtitle, claims, cardClass, hypothesis) {
   if (!claims.length) return null;
   const list = el("ul", { class: "claims" });
@@ -221,6 +270,7 @@ function claimsCard(title, subtitle, claims, cardClass, hypothesis) {
     subtitle ? el("p", { class: "subtitle", text: subtitle }) : null, list);
 }
 
+/* Tarjeta de resumen; avisa cuando lo redactó el sistema y no el modelo. */
 function summaryCard(final) {
   const card = el("section", { class: "card card-summary" }, el("h2", { text: "Resumen" }),
     el("p", { class: "summary", text: final.resumen }));
@@ -230,6 +280,7 @@ function summaryCard(final) {
   return card;
 }
 
+/* Tabla genérica: columnas desde `numericFrom` se alinean a la derecha. Cada fila puede traer un título (tooltip). */
 function table(headers, rows, numericFrom, wideLast = false) {
   const head = el("tr", {}, ...headers.map((h, i) => el("th", { class: i >= numericFrom ? "num" : "", text: h })));
   const body = rows.map((row) => {
@@ -246,6 +297,7 @@ function table(headers, rows, numericFrom, wideLast = false) {
     el("table", {}, el("thead", {}, head), el("tbody", {}, ...body)));
 }
 
+/* Tabla de contraste entre el reporte comercial y los datos, con su veredicto. */
 function contrastCard(contrast) {
   if (!contrast) return null;
   const rows = contrast.rows.map((r) => ({
@@ -260,6 +312,7 @@ function contrastCard(contrast) {
   return card;
 }
 
+/* Tabla de un cálculo CALC-n; al pasar el cursor por una fila se ve la fórmula. */
 function calcCard(block) {
   const result = block.result;
   if (!result || !result.total) return null;
@@ -278,6 +331,7 @@ function calcCard(block) {
   return card;
 }
 
+/* Lista de los fragmentos de documentos que recibió el modelo. */
 function evidenceCard(evidence) {
   if (!evidence.length) return null;
   const row = el("div", { class: "chip-row" });
@@ -286,6 +340,7 @@ function evidenceCard(evidence) {
     el("p", { class: "subtitle", text: "Fragmentos de documentos que recibió el modelo. Haz clic para leer el texto original." }), row);
 }
 
+/* Afirmaciones del modelo que el validador descartó, con su motivo. */
 function discardsCard(discards) {
   if (!discards.length) return null;
   const card = el("details", { class: "card" },
@@ -299,6 +354,7 @@ function discardsCard(discards) {
   return card;
 }
 
+/* Detalle técnico: modelo, búsqueda, plan, tiempos, tokens, filas excluidas y avisos. */
 function techCard(r) {
   const planOrigin = r.plan_source === "llm" ? "El modelo" : "Plan por defecto";
   const timings = Object.entries(r.timings).map(([k, v]) => `${k} ${fmtSec(v)}`).join(" · ");
@@ -321,6 +377,7 @@ function techCard(r) {
   return card;
 }
 
+/* Arma todas las tarjetas de la respuesta en orden y las muestra. */
 function renderAnswer(r) {
   const root = $("answer");
   const f = r.final;
@@ -337,13 +394,16 @@ function renderAnswer(r) {
     discardsCard(f.descartes),
     techCard(r),
   ];
-  root.replaceChildren(...cards.filter(Boolean));   // a missing card is null: it must not become the text "null"
+  root.replaceChildren(...cards.filter(Boolean));   // una tarjeta ausente es null: no debe convertirse en el texto "null"
   root.hidden = false;
   root.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-/* ------------------------------------------------------------------ drawer */
+/* =====================================================================
+   BLOQUE: Panel lateral (fuente citada, calidad de datos, alertas de seguridad)
+   ===================================================================== */
 
+/* Abre el panel con un título y un contenido. */
 function openDrawer(title, content) {
   $("drawer-title").textContent = title;
   $("drawer-body").replaceChildren(content);
@@ -352,11 +412,13 @@ function openDrawer(title, content) {
   $("drawer-close").focus();
 }
 
+/* Cierra el panel. */
 function closeDrawer() {
   $("drawer").hidden = true;
   $("overlay").hidden = true;
 }
 
+/* Muestra el texto original de un fragmento de documento. */
 async function showEvidence(id) {
   openDrawer(id, el("p", { class: "hint", text: "Cargando…" }));
   try {
@@ -373,6 +435,7 @@ async function showEvidence(id) {
   }
 }
 
+/* Muestra el reporte de calidad de datos: cada corrección o exclusión. */
 async function showQuality() {
   openDrawer("Calidad de datos", el("p", { class: "hint", text: "Cargando…" }));
   try {
@@ -390,6 +453,7 @@ async function showQuality() {
   }
 }
 
+/* Muestra los fragmentos sospechosos (cuarentena o advertencia) como texto plano. */
 async function showSecurity() {
   openDrawer("Alertas de seguridad", el("p", { class: "hint", text: "Cargando…" }));
   try {
@@ -412,8 +476,11 @@ async function showSecurity() {
   }
 }
 
-/* -------------------------------------------------------------------- init */
+/* =====================================================================
+   BLOQUE: Arranque
+   ===================================================================== */
 
+/* Prepara los botones de ejemplo y los eventos, y comienza a consultar el estado. */
 function init() {
   const row = $("examples");
   for (const [label, question] of EXAMPLES) {

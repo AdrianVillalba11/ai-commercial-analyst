@@ -1,6 +1,10 @@
-"""Tests for the sales cleaning rules.
+"""
+PRUEBAS DE LAS REGLAS DE LIMPIEZA
 
-Unit tests use tiny synthetic tables, which proves the rules are generic and not tied to the real CSV.
+Qué verifica: cada regla de data/cleaning.py (espacios, categorías, duplicados, ids en conflicto, mes inválido,
+valores no numéricos o negativos, punto de venta inconsistente) y el reporte de calidad.
+Cómo: las pruebas unitarias usan tablas sintéticas diminutas, lo que demuestra que las reglas son genéricas y no
+dependen del CSV real; al final hay pruebas de integración con el CSV real.
 """
 import pandas as pd
 import pytest
@@ -17,6 +21,7 @@ BASE = {
 
 
 def make_df(*overrides: dict) -> pd.DataFrame:
+    """Tabla cruda de ejemplo con filas válidas; cada diccionario modifica una fila."""
     rows = []
     for i, o in enumerate(overrides, start=1):
         row = {**BASE, "registro_id": f"V{i}", **o}
@@ -25,6 +30,7 @@ def make_df(*overrides: dict) -> pd.DataFrame:
 
 
 def rules_of(result):
+    """Reglas que se activaron en un resultado de limpieza."""
     return {(i.registro_id, i.rule, i.action) for i in result.report.issues}
 
 
@@ -97,9 +103,9 @@ def test_negative_values_are_excluded():
 
 
 @pytest.mark.parametrize("override", [
-    {"punto_venta_id": "OC-T-001"},            # prefix of another region
-    {"canal": "Moderno"},                       # channel letter T but canal Moderno
-    {"punto_venta_id": "PUNTO-1"},             # invalid format
+    {"punto_venta_id": "OC-T-001"},            # prefijo de otra región
+    {"canal": "Moderno"},                       # letra de canal T pero canal Moderno
+    {"punto_venta_id": "PUNTO-1"},             # formato inválido
 ])
 def test_inconsistent_point_of_sale_is_excluded(override):
     result = clean_sales(make_df(override))
@@ -123,10 +129,13 @@ def test_missing_file_raises_clear_error(tmp_path):
         load_raw_sales(tmp_path / "no_existe.csv")
 
 
-# ---- integration with the real CSV ----
+# =====================================================================
+# BLOQUE: Integración con el CSV real
+# =====================================================================
 
 @pytest.fixture(scope="module")
 def real():
+    """Limpieza del CSV real, hecha una sola vez para todo el módulo."""
     return load_clean_sales()
 
 
@@ -137,13 +146,13 @@ def test_real_csv_row_counts(real):
 
 def test_real_csv_known_problems_are_reported(real):
     found = rules_of(real)
-    assert ("V00667", "normalizacion_texto", CORRECTED) in found      # BRIO
+    assert ("V00667", "normalizacion_texto", CORRECTED) in found      # BRIO (mayúsculas)
     assert ("V02929", "normalizacion_texto", CORRECTED) in found      # "Sur "
     assert ("V01999", "duplicado_exacto", EXCLUDED) in found
     assert ("V03997", "valor_no_numerico", EXCLUDED) in found         # N/D
     assert ("V03999", "mes_invalido", EXCLUDED) in found              # 2026-13
     assert ("V03998", "valor_negativo", EXCLUDED) in found
-    assert ("V03358", "valor_no_numerico", EXCLUDED) in found         # empty units
+    assert ("V03358", "valor_no_numerico", EXCLUDED) in found         # unidades vacías
     assert ("V02612", "pdv_inconsistente", EXCLUDED) in found
 
 

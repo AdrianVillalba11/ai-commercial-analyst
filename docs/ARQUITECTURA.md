@@ -132,7 +132,7 @@ Casi todo es el modelo escribiendo (unos 53 tokens por segundo).
 **Seguridad y validación**
 
 7. **La detección de inyección es heurística:** una paráfrasis sin palabras gatillo puede pasar esa capa. Por eso existen las capas siguientes.
-8. **El validador revisa forma y consistencia,** no verdad semántica: no puede demostrar que una frase sea fiel al fragmento que cita.
+8. **El validador revisa forma y consistencia,** no verdad semántica: no puede demostrar que una frase sea fiel al fragmento que cita. Ejemplo real, de la consulta nueva 5 en [respuestas_referencia.md](evidencia/respuestas_referencia.md): el resumen del modelo atribuyó a toda la presentación Familiar la cifra de uno de sus canales (−2.278 unidades, −11,23 %), cuando el total de Familiar es −4.773 (−10,86 %). El validador comprueba que cada cifra *exista* en los cálculos, no que esté atribuida al grupo correcto, y por eso la dejó pasar. Los hechos que escribe el código sí traen la cifra correcta y se muestran junto al resumen, junto con la tabla de cálculos.
 9. **El validador puede descartar de más.** En la evaluación, entre el 47 y el 61 % de las afirmaciones del modelo se descartaron, casi todas hipótesis sin respaldo documental.
 
 **Evaluaciones**

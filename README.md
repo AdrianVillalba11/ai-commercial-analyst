@@ -146,6 +146,7 @@ Todas las variables son opcionales. Se leen del archivo `.env` (plantilla en `.e
 ├── data/raw/                 # los cinco archivos de entrada originales
 ├── src/analyst/
 │   ├── config.py             # configuración
+│   ├── text.py               # utilidades de texto compartidas (quitar tildes, reconocer regiones)
 │   ├── service.py            # el flujo completo de una pregunta
 │   ├── data/                 # carga y limpieza del CSV; reporte de calidad
 │   ├── analytics/            # cálculos T1 vs T2 con pandas

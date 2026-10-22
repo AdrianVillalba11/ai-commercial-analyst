@@ -1,8 +1,10 @@
-"""End-to-end tests with the real models (skipped when Ollama or the models are not available).
+"""
+PRUEBAS DE EXTREMO A EXTREMO CON LOS MODELOS REALES
 
-They check structure, not wording: a language model never writes the same sentence twice. What
-the model says is checked by the guardrails (task 8), not here. The printed table shows how many
-cited sources are not real ids, as input for those guardrails.
+Qué verifica: el flujo completo con Ollama de verdad (se saltan solas si Ollama o los modelos no están).
+Qué revisan: la ESTRUCTURA, no la redacción: un modelo de lenguaje nunca escribe dos veces la misma frase. Lo que
+dice el modelo lo comprueban los guardrails (tarea 8), no estas pruebas. La tabla impresa muestra cuántas fuentes
+citadas no son ids reales, como insumo para esos guardrails.
 """
 import pytest
 
@@ -24,9 +26,10 @@ MAX_SECONDS = 90
 
 @pytest.fixture(scope="module")
 def service():
+    """Servicio real; se salta la prueba si Ollama no está disponible."""
     try:
         svc = build_default_service()
-        svc.ask("¿Cuál es la capital de Francia?")      # warm-up and availability check of the chat model
+        svc.ask("¿Cuál es la capital de Francia?")      # calentamiento y comprobación de que el modelo de chat está disponible
     except OllamaError as exc:
         pytest.skip(f"Ollama o los modelos no están disponibles: {exc}")
     return svc
@@ -34,14 +37,17 @@ def service():
 
 @pytest.fixture(scope="module")
 def results(service):
+    """Respuestas reales a las cuatro preguntas de referencia del enunciado, calculadas una sola vez."""
     return {name: service.ask(question) for name, question in QUESTIONS.items()}
 
 
 def known_ids(result):
+    """Ids válidos de la consulta: cálculos y evidencia entregada."""
     return {b.calc_id for b in result.calc} | {e.chunk_id for e in result.evidence}
 
 
 def claims(result):
+    """Afirmaciones tal como las escribió el modelo."""
     a = result.answer
     return a.hechos + a.hipotesis + a.contradicciones
 
@@ -91,7 +97,9 @@ def test_report_table(results, capsys):
                   f"{t['redaccion']:7.1f} {t['total']:7.1f}  {len(fake)}/{len(cited)} {fake}")
 
 
-# ---- what the analyst finally sees (after the guardrails) ----
+# =====================================================================
+# BLOQUE: Lo que ve finalmente el analista (tras los guardrails)
+# =====================================================================
 
 def test_the_final_answer_cites_only_real_sources_whatever_the_model_wrote(results):
     for name, result in results.items():
@@ -105,7 +113,7 @@ def test_the_final_answer_cites_only_real_sources_whatever_the_model_wrote(resul
 def test_the_final_quantitative_answer_states_the_largest_drop_with_its_subject(results):
     fact = results["cuantitativa"].final.hechos[0]
     assert fact.origen == "calculo" and "Sur" in fact.texto and "-30,27 %" in fact.texto
-    assert results["cuantitativa"].final.hipotesis == []          # no documents were used: nothing to hypothesise from
+    assert results["cuantitativa"].final.hipotesis == []          # no se usaron documentos: no hay de dónde sacar hipótesis
 
 
 def test_the_final_contrast_answer_comes_from_the_code_not_from_the_model(results):

@@ -1,4 +1,9 @@
-"""Tests for the hybrid retrieval pieces. No Ollama needed: a fake embedder stands in."""
+"""
+PRUEBAS DE LA BÚSQUEDA (léxica, fusión, métricas, vectores, ChromaDB y buscador)
+
+Qué verifica: rag/lexical.py, rag/fusion.py, rag/evaluation.py, rag/embedder.py, rag/semantic.py y rag/retriever.py.
+Cómo: no necesita Ollama; un generador de vectores falso (tests/helpers.py) ocupa su lugar.
+"""
 import json
 from dataclasses import replace
 
@@ -16,7 +21,9 @@ from analyst.security.injection import load_safe_corpus
 from tests.helpers import FakeEmbedder, make_chunk
 
 
-# ------------------------------------------------------------------ lexical
+# =====================================================================
+# BLOQUE: Búsqueda léxica (BM25)
+# =====================================================================
 
 def test_tokenize_folds_accents_drops_stopwords_and_keeps_ids():
     tokens = tokenize("¿Qué dijeron las Promociones en CAM-150 y SU-T-003?")
@@ -44,7 +51,7 @@ def test_bm25_prefers_more_matches_and_shorter_text():
         make_chunk("C", "texto sin relacion"),
     ]
     ranking = [cid for cid, _ in BM25Index(chunks).search("faltantes")]
-    assert ranking == ["A", "B"]          # C shares no term, so it is not returned at all
+    assert ranking == ["A", "B"]          # C no comparte ningún término, así que no se devuelve
 
 
 def test_bm25_finds_an_exact_id_first_and_ignores_pure_stopwords():
@@ -60,7 +67,9 @@ def test_bm25_matches_plural_and_singular():
     assert [cid for cid, _ in BM25Index(chunks).search("faltantes")] == ["A"]
 
 
-# ------------------------------------------------------------------- fusion
+# =====================================================================
+# BLOQUE: Fusión de rankings (RRF)
+# =====================================================================
 
 def test_rrf_scores_by_hand():
     fused = reciprocal_rank_fusion({"a": ["x", "y", "z"], "b": ["y", "w"]}, k=60)
@@ -79,7 +88,7 @@ def test_rrf_records_the_position_in_each_ranking():
 
 
 def test_rrf_ties_are_broken_deterministically():
-    # x and y have the same score; both best rank 1; alphabetical order decides
+    # x e y tienen el mismo puntaje; ambos tienen mejor posición 1; decide el orden alfabético
     fused = reciprocal_rank_fusion({"a": ["x", "y"], "b": ["y", "x"]})
     assert [h.chunk_id for h in fused] == ["x", "y"]
 
@@ -88,7 +97,7 @@ def test_rrf_edge_cases():
     assert reciprocal_rank_fusion({}) == []
     assert reciprocal_rank_fusion({"a": []}) == []
     once = reciprocal_rank_fusion({"a": ["x", "x"]})
-    assert once[0].score == pytest.approx(1 / 61)       # a repeated id counts once
+    assert once[0].score == pytest.approx(1 / 61)       # un id repetido cuenta una vez
 
 
 def test_rrf_rewards_agreement_between_rankers():
@@ -98,7 +107,7 @@ def test_rrf_rewards_agreement_between_rankers():
 
 def test_rrf_weights_let_one_ranker_count_more():
     rankings = {"lexical": ["x"], "semantic": ["y"]}
-    assert [h.chunk_id for h in reciprocal_rank_fusion(rankings)] == ["x", "y"]            # tie, alphabetical
+    assert [h.chunk_id for h in reciprocal_rank_fusion(rankings)] == ["x", "y"]            # empate: orden alfabético
     weighted = reciprocal_rank_fusion(rankings, weights={"semantic": 3})
     assert [h.chunk_id for h in weighted] == ["y", "x"]
     assert weighted[0].score == pytest.approx(3 / 61)
@@ -109,13 +118,15 @@ def test_rrf_weight_zero_silences_a_ranker():
     assert [h.chunk_id for h in fused][0] == "x" and fused[1].score == 0
 
 
-# ------------------------------------------------------ evaluation metrics
+# =====================================================================
+# BLOQUE: Métricas de evaluación
+# =====================================================================
 
 def test_case_metrics_by_hand():
     case = CaseResult("q", {"a", "b"}, ["x", "a", "y", "b"])
     assert case.hit and case.first_rank == 2 and case.top1 is False
     assert case.recall == 1.0 and case.precision == 0.5
-    # DCG = 1/log2(3) + 1/log2(5); ideal DCG = 1/log2(2) + 1/log2(3)
+    # DCG = 1/log2(3) + 1/log2(5); DCG ideal = 1/log2(2) + 1/log2(3)
     assert case.ndcg == pytest.approx(1.06161 / 1.63093, abs=1e-4)
 
 
@@ -138,7 +149,9 @@ def test_tuning_and_validation_questions_are_disjoint_and_expect_existing_ids(co
         assert expected <= known
 
 
-# ----------------------------------------------------------------- embedder
+# =====================================================================
+# BLOQUE: Generador de vectores
+# =====================================================================
 
 def mock_embedder(handler, **kwargs):
     return OllamaEmbedder(model="m", base_url="http://x", client=httpx.Client(transport=httpx.MockTransport(handler)), **kwargs)
@@ -190,14 +203,16 @@ def test_embedder_reuses_one_http_client():
 
 
 def test_example_config_points_to_ipv4_loopback_not_localhost():
-    """On Windows 'localhost' resolves to IPv6 first and adds ~2 s to every request."""
+    """En Windows 'localhost' se resuelve primero a IPv6 y suma ~2 s a cada petición."""
     from analyst.config import PROJECT_ROOT
     line = next(l for l in (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8").splitlines()
                 if l.startswith("OLLAMA_BASE_URL="))
     assert "127.0.0.1" in line and "localhost" not in line
 
 
-# ----------------------------------------------------------------- semantic
+# =====================================================================
+# BLOQUE: Búsqueda semántica (ChromaDB)
+# =====================================================================
 
 @pytest.fixture
 def small_chunks():
@@ -239,7 +254,9 @@ def test_fingerprint_depends_on_model_and_content(small_chunks):
     assert fingerprint(small_chunks[:2], "m") != base
 
 
-# ---------------------------------------------------------------- retriever
+# =====================================================================
+# BLOQUE: Buscador completo
+# =====================================================================
 
 @pytest.fixture(scope="module")
 def corpus():
@@ -279,7 +296,7 @@ def test_region_filter_keeps_that_region_and_general_chunks(retriever):
     chunks = [i.chunk for i in result.items]
     assert chunks and all((not c.regions) or "Sur" in c.regions for c in chunks)
     assert "INV-LIM-01" in {c.chunk_id for c in chunks}          # general: mentions no region
-    assert "OC-ORI-04" not in {c.chunk_id for c in chunks}       # only about Oriente
+    assert "OC-ORI-04" not in {c.chunk_id for c in chunks}       # solo habla de Oriente
 
 
 def test_it_degrades_to_lexical_when_ollama_is_down(corpus, tmp_path):
@@ -289,7 +306,7 @@ def test_it_degrades_to_lexical_when_ollama_is_down(corpus, tmp_path):
     assert result.degraded is True and result.items
     assert "solo la léxica" in result.notes[0] and "Ollama apagado" in result.notes[0]
     assert all(set(i.ranks) == {"lexical"} for i in result.items)
-    embedder.fail = False                                         # Ollama comes back
+    embedder.fail = False                                         # Ollama vuelve a responder
     recovered = retriever.retrieve("faltantes en el Sur")
     assert recovered.degraded is False and any("semantic" in i.ranks for i in recovered.items)
 

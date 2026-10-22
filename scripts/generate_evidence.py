@@ -1,11 +1,15 @@
-"""Generates the execution evidence in docs/evidencia/.
+"""
+GENERADOR DE EVIDENCIA DE EJECUCIÓN
 
-    python scripts/generate_evidence.py             # both files
-    python scripts/generate_evidence.py --tests     # only the test run
-    python scripts/generate_evidence.py --answers   # only the reference answers
+Qué hace: crea los archivos de docs/evidencia/ (resultado de las pruebas y respuestas de referencia).
+Con qué se conecta: ejecuta pytest y usa service.py; los archivos que genera los enlazan el README y la documentación.
 
-Needs Ollama running with the configured models (see README.md). The answers file is the output of a
-real run on the date it states; it is not a set of fixed answers.
+    python scripts/generate_evidence.py             # ambos archivos
+    python scripts/generate_evidence.py --tests     # solo la ejecución de pruebas
+    python scripts/generate_evidence.py --answers   # solo las respuestas de referencia
+
+Necesita Ollama en ejecución con los modelos configurados (ver README.md). El archivo de respuestas es la
+salida de una ejecución real en la fecha que indica; no son respuestas fijas.
 """
 import argparse
 import datetime
@@ -20,6 +24,9 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from analyst.config import settings  # noqa: E402
 
+# =====================================================================
+# BLOQUE: Constantes y preguntas de referencia
+# =====================================================================
 EVIDENCE_DIR = ROOT / "docs" / "evidencia"
 QUESTIONS = [
     ("1 · Cuantitativa", "¿Cuál fue la región con mayor caída porcentual en ventas netas de Brío entre T1 y T2 de 2026? "
@@ -30,10 +37,19 @@ QUESTIONS = [
                                                "con los datos de ventas?"),
     ("4 · Causalidad", "¿Podemos afirmar que las promociones de la competencia causaron la caída de ventas? "
                        "¿Qué evidencia lo sustenta o limita?"),
+    # Consultas NUEVAS: no están en el enunciado ni en los botones de ejemplo de la página. Demuestran que
+    # el sistema acepta preguntas distintas a las de referencia (no hay respuestas fijas para los ejemplos).
+    ("5 · Consulta nueva (cuantitativa con filtro)", "¿Cómo variaron las unidades vendidas de Brío en la presentación Familiar "
+                                                    "entre T1 y T2, y en qué canal fue mayor la caída?"),
+    ("6 · Consulta nueva (integrada en una región)", "¿Qué dicen los comerciantes sobre los faltantes de producto en el Sur?"),
 ]
 
 
+# =====================================================================
+# BLOQUE: Prueba automatizada
+# =====================================================================
 def environment_lines() -> list[str]:
+    """Líneas con la fecha, la versión de Python y los modelos usados."""
     return [
         f"- Fecha: {datetime.datetime.now():%Y-%m-%d %H:%M}",
         f"- Python: {platform.python_version()} · Sistema: {platform.system()} {platform.release()}",
@@ -43,6 +59,7 @@ def environment_lines() -> list[str]:
 
 
 def write_tests() -> int:
+    """Corre toda la suite de pytest y guarda la salida completa con un encabezado."""
     command = [sys.executable, "-m", "pytest", "-v", "-p", "no:cacheprovider"]
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     started = datetime.datetime.now()
@@ -53,14 +70,18 @@ def write_tests() -> int:
               f"Duración total: {seconds:.0f} s", "",
               "Las pruebas marcadas `ollama` usan los modelos reales; sin Ollama se saltan solas.", "", "=" * 78, ""]
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
-    output = run.stdout.replace(str(ROOT), ".")          # do not leak the absolute path of the machine
+    output = run.stdout.replace(str(ROOT), ".")          # no se filtra la ruta absoluta de este computador
     (EVIDENCE_DIR / "pytest_completo.txt").write_text("\n".join(header) + output, encoding="utf-8")
     summary = [line for line in run.stdout.splitlines() if " passed" in line or " failed" in line]
     print("Pruebas:", summary[-1] if summary else f"código {run.returncode}")
     return run.returncode
 
 
+# =====================================================================
+# BLOQUE: Respuestas de referencia
+# =====================================================================
 def claims(title: str, items) -> list[str]:
+    """Sección en Markdown con una lista de afirmaciones y sus fuentes."""
     if not items:
         return []
     lines = ["", f"**{title}**", ""]
@@ -71,6 +92,7 @@ def claims(title: str, items) -> list[str]:
 
 
 def format_question(title: str, question: str, result) -> list[str]:
+    """Texto en Markdown de una pregunta: configuración, resumen, secciones, descartes, evidencia y cálculos."""
     final = result.final
     origin = "" if final.resumen_origen == "modelo" else " _(redactado por el sistema a partir de los cálculos)_"
     lines = [f"## Pregunta {title}", "", f"> {question}", "",
@@ -104,12 +126,14 @@ def format_question(title: str, question: str, result) -> list[str]:
 
 
 def write_answers() -> int:
+    """Hace las preguntas de referencia y las nuevas con el sistema real y guarda las respuestas."""
     from analyst.service import build_default_service
     service = build_default_service()
     service.warm_up()
     document = ["# Respuestas de referencia del sistema", "", *environment_lines(), "",
                 "> **Qué es este archivo:** la salida de una ejecución real del sistema en la fecha indicada. "
-                "**No son respuestas fijas.** Un modelo de lenguaje local puede redactar de forma distinta en cada "
+                "**No son respuestas fijas.** Las preguntas 5 y 6 no están en el enunciado: se agregan para mostrar que el "
+                "sistema acepta consultas nuevas. Un modelo de lenguaje local puede redactar de forma distinta en cada "
                 "ejecución. Lo que no cambia son las cifras, el veredicto del contraste con el reporte y las "
                 "limitaciones de causalidad, porque salen de código y no del modelo. Para regenerarlo: "
                 "`python scripts/generate_evidence.py --answers`.", ""]
@@ -122,7 +146,11 @@ def write_answers() -> int:
     return 0
 
 
+# =====================================================================
+# BLOQUE: Punto de entrada
+# =====================================================================
 def main() -> int:
+    """Lee las opciones y genera los archivos pedidos (ambos por defecto)."""
     parser = argparse.ArgumentParser(description="Genera la evidencia de ejecución")
     parser.add_argument("--tests", action="store_true", help="Solo la ejecución de pruebas")
     parser.add_argument("--answers", action="store_true", help="Solo las respuestas de referencia")

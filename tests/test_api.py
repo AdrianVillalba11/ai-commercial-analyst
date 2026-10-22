@@ -1,4 +1,11 @@
-"""Tests for the web API, the step-by-step progress and the guards on the page's own code."""
+"""
+PRUEBAS DE LA API WEB
+
+Qué verifica: api/main.py (página, preguntar, progreso paso a paso por SSE, estado, calidad, seguridad, evidencia, cabeceras
+de seguridad) y vigilancias sobre el código de la propia página (sin HTML dinámico, solo tema claro, sin recursos externos,
+y que la página solo lee campos que la API realmente devuelve).
+Cómo: TestClient de FastAPI con un modelo falso, sin Ollama.
+"""
 import json
 import re
 import time
@@ -27,20 +34,24 @@ CONTRAST = Plan(tipo="contraste_reporte", analisis=[CALC], usar_documentos=True)
 
 @pytest.fixture(scope="module")
 def cleaned():
+    """Datos reales limpios."""
     return load_clean_sales()
 
 
 @pytest.fixture(scope="module")
 def corpus():
+    """Corpus real de documentos ya revisado."""
     return load_safe_corpus()
 
 
 @pytest.fixture(scope="module")
 def reported():
+    """Variaciones regionales que declara el reporte."""
     return parse_reported_regional_variation(settings.raw_data_dir / "05_Reporte_Comercial.pdf")
 
 
 @pytest.fixture
+# Fábrica de clientes de prueba con un modelo falso configurable.
 def make_client(cleaned, corpus, reported, tmp_path):
     clients = []
 
@@ -49,7 +60,7 @@ def make_client(cleaned, corpus, reported, tmp_path):
         service = AnalystService(SalesAnalyzer(cleaned.data, cleaned.report), retriever, llm, cleaned.report, corpus,
                                  reported, corpus.safe)
         client = TestClient(create_app(service, warm_up=warm_up))
-        client.__enter__()                      # runs the startup (and the warm-up thread, if enabled)
+        client.__enter__()                      # ejecuta el arranque (y el hilo de calentamiento, si está activo)
         clients.append(client)
         return client
 
@@ -59,7 +70,7 @@ def make_client(cleaned, corpus, reported, tmp_path):
 
 
 def frames(text: str) -> list[tuple[str, dict]]:
-    """Parse a server-sent-events body into (event, data) pairs."""
+    """Convierte un cuerpo de eventos SSE en pares (evento, datos)."""
     result = []
     for block in text.strip().split("\n\n"):
         event, data = "message", ""
@@ -72,7 +83,9 @@ def frames(text: str) -> list[tuple[str, dict]]:
     return result
 
 
-# --------------------------------------------------------------------- page
+# =====================================================================
+# BLOQUE: Página
+# =====================================================================
 
 def test_the_page_and_its_assets_are_served(make_client):
     client = make_client(FakeLLM(plan=QUANTITATIVE))
@@ -89,7 +102,9 @@ def test_responses_carry_security_headers(make_client):
     assert make_client(FakeLLM(plan=QUANTITATIVE)).get("/api/quality").headers["cache-control"] == "no-store"
 
 
-# ---------------------------------------------------------------------- ask
+# =====================================================================
+# BLOQUE: Preguntar
+# =====================================================================
 
 def test_ask_returns_the_checked_answer_with_its_trace(make_client):
     data = make_client(FakeLLM(plan=QUANTITATIVE)).post("/api/ask", json={"question": "¿Cuál región cayó más?"}).json()
@@ -122,7 +137,9 @@ def test_an_unexpected_error_is_a_500_without_internal_details(make_client):
     assert response.status_code == 500 and "secret" not in response.text and "interno" in response.json()["detail"]
 
 
-# ------------------------------------------------------------------ stream
+# =====================================================================
+# BLOQUE: Progreso en vivo (SSE)
+# =====================================================================
 
 def test_stream_announces_each_step_then_the_result(make_client):
     response = make_client(FakeLLM(plan=QUANTITATIVE)).post("/api/ask/stream", json={"question": "¿Cuál región cayó más?"})
@@ -150,7 +167,9 @@ def test_stream_returns_the_report_contrast(make_client):
     assert result["contrast"]["consistent"] is False and result["final"]["resumen"].startswith("El reporte NO es consistente")
 
 
-# ------------------------------------------------------------- information
+# =====================================================================
+# BLOQUE: Información (salud, calidad, seguridad, evidencia)
+# =====================================================================
 
 def test_health_reports_ollama_models_and_warm_up(make_client, monkeypatch):
     monkeypatch.setattr(api, "check_ollama", lambda *a, **k: {
@@ -200,12 +219,14 @@ def test_evidence_endpoint_serves_citable_fragments_but_never_the_quarantined_on
     client = make_client(FakeLLM(plan=QUANTITATIVE))
     ok = client.get("/api/evidence/INV-01").json()
     assert ok["doc_title"] == "Investigación de consumidor" and "Cinco de los ocho" in ok["text"] and ok["page"] == 1
-    assert client.get("/api/evidence/OC-EXT-06").status_code == 404        # quarantined
+    assert client.get("/api/evidence/OC-EXT-06").status_code == 404        # en cuarentena
     assert client.get("/api/evidence/INVENTADO-1").status_code == 404
     assert client.get("/api/evidence/CALC-1").status_code == 404
 
 
-# ------------------------------------------------------- service additions
+# =====================================================================
+# BLOQUE: Añadidos al servicio
+# =====================================================================
 
 def test_service_reports_each_step_to_the_progress_callback(make_client):
     client = make_client(FakeLLM(plan=INTEGRATED))
@@ -219,9 +240,12 @@ def test_service_serves_fragments_only_from_the_screened_corpus(make_client):
     assert service.get_chunk("INV-01").chunk_id == "INV-01" and service.get_chunk("OC-EXT-06") is None
 
 
-# ----------------------------------------------- guards on the page's code
+# =====================================================================
+# BLOQUE: Vigilancias sobre el código de la página
+# =====================================================================
 
 def read(name: str) -> str:
+    """Contenido de un archivo de la carpeta web/."""
     return (WEB_DIR / name).read_text(encoding="utf-8")
 
 
@@ -238,11 +262,11 @@ def test_the_page_is_light_only():
 
 @pytest.mark.parametrize("name", ["index.html", "app.js", "style.css"])
 def test_the_page_loads_nothing_from_the_internet(name):
-    assert not re.search(r"https?://", read(name))          # works offline
+    assert not re.search(r"https?://", read(name))          # funciona sin internet
 
 
 def test_the_page_reads_only_fields_the_health_endpoint_returns(make_client):
-    """The page once read `ollama_running` while the API returned `running`: it showed Ollama as off while it was on."""
+    """La página llegó a leer `ollama_running` mientras la API devolvía `running`: mostraba Ollama apagado estando encendido."""
     health = make_client(FakeLLM(plan=QUANTITATIVE)).get("/api/health").json()
     used = set(re.findall(r"\bh\.([a-z_]+)", read("app.js")))
     assert used and used <= set(health), used - set(health)

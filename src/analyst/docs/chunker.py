@@ -1,8 +1,12 @@
-"""Turn parsed blocks into citable chunks, one per unit of evidence.
+"""
+TROCEADO DE DOCUMENTOS EN FRAGMENTOS CITABLES
 
-Chunks are cut by meaning (a finding, a table row, a limitation), not by character count,
-so every citation points to one complete statement. Where the document defines an evidence
-id (INV-01, REP-02, OC-SUR-01, CAM-101...), that id is the chunk id.
+Qué hace: convierte los bloques que entrega parser.py en fragmentos (chunks), uno por unidad de evidencia.
+Con qué se conecta: sus fragmentos alimentan el buscador (rag/), el contraste con el reporte y el
+validador de citas.
+Idea clave: se corta por SIGNIFICADO (un hallazgo, una fila de tabla, una limitación) y no por número
+de caracteres, así cada cita apunta a una afirmación completa. Si el documento define un id de
+evidencia (INV-01, REP-02, OC-SUR-01, CAM-101...), ese id es el id del fragmento.
 """
 import re
 from collections import defaultdict
@@ -14,23 +18,33 @@ from analyst.data.cleaning import REGIONS
 from analyst.docs.parser import Block, parse_docx, parse_markdown, parse_pdf
 from analyst.text import REGION_EXACT, fold
 
+# =====================================================================
+# BLOQUE: Patrones de identificadores
+# Reconocen ids como INV-01, OC-SUR-01 o CAM-101 al inicio de un texto.
+# =====================================================================
 _ID = r"[A-Z]{2,5}(?:-[A-Za-z0-9]+)+"
 _ID_PARAGRAPH = re.compile(rf"^({_ID})\s*[|:]")
 _ID_HEADING = re.compile(rf"^({_ID})\s*\|\s*(.+)$")
 _ID_THEN_REST = re.compile(rf"^({_ID})\s+(.*)$")
+# Códigos de región que aparecen dentro de los ids (OC-SUR-01 -> Sur).
 _REGION_CODES = {"SUR": "Sur", "CEN": "Centro", "NOR": "Norte", "ORI": "Oriente", "OCC": "Occidente"}
 
 
+# =====================================================================
+# BLOQUE: Estructuras: fragmento y especificación de documento
+# =====================================================================
 @dataclass
 class Chunk:
+    """Un fragmento citable de un documento, con su id, su texto original y el texto que se vectoriza."""
+
     chunk_id: str
-    doc: str                  # file name
+    doc: str                  # nombre del archivo
     doc_title: str
     doc_type: str
     section: str
     kind: str                 # hallazgo, limitacion, cita_entrevista, fila_tabla, tabla, texto, ...
-    text: str                 # original, citable text
-    embed_text: str           # text plus its context line; this is what gets embedded
+    text: str                 # texto original, el que se cita
+    embed_text: str           # texto más su línea de contexto; esto es lo que se vectoriza
     regions: list[str] = field(default_factory=list)
     page: int | None = None
     metadata: dict = field(default_factory=dict)
@@ -41,12 +55,15 @@ class Chunk:
 
 @dataclass(frozen=True)
 class DocSpec:
+    """Datos fijos de un documento: archivo, prefijo de ids, título y tipo."""
+
     filename: str
     prefix: str
     title: str
     doc_type: str
 
 
+# Los cuatro documentos de apoyo (el CSV de ventas se maneja aparte).
 DOCUMENTS = [
     DocSpec("01_Contexto_Negocio.md", "CTX", "Contexto de negocio", "contexto"),
     DocSpec("03_Investigacion_Consumidor.pdf", "INV", "Investigación de consumidor", "investigacion_consumidor"),
@@ -55,7 +72,11 @@ DOCUMENTS = [
 ]
 
 
+# =====================================================================
+# BLOQUE: Carga de todos los documentos
+# =====================================================================
 def load_all_chunks(raw_dir: Path | None = None) -> list[Chunk]:
+    """Lee los cuatro documentos y devuelve todos sus fragmentos; falla si hay ids repetidos."""
     raw_dir = Path(raw_dir) if raw_dir else settings.raw_data_dir
     chunks: list[Chunk] = []
     for spec in DOCUMENTS:
@@ -71,17 +92,21 @@ def load_all_chunks(raw_dir: Path | None = None) -> list[Chunk]:
     return chunks
 
 
-# ------------------------------------------------------------------ helpers
-
+# =====================================================================
+# BLOQUE: Ayudantes
+# =====================================================================
 def _slug(text: str) -> str:
+    """Texto -> identificador en mayúsculas sin tildes ('Región Sur' -> 'REGION-SUR')."""
     return re.sub(r"[^A-Z0-9]+", "-", fold(text).upper()).strip("-")
 
 
 def _key(text: str) -> str:
+    """Texto -> nombre de campo en minúsculas con guion bajo (para los metadatos)."""
     return _slug(text).lower().replace("-", "_")
 
 
 def _check_unique_ids(chunks: list[Chunk]) -> None:
+    """Un id repetido haría ambigua una cita, así que se detiene la carga."""
     seen: set[str] = set()
     for chunk in chunks:
         if chunk.chunk_id in seen:
@@ -90,12 +115,14 @@ def _check_unique_ids(chunks: list[Chunk]) -> None:
 
 
 def _regions_of(chunk_id: str, text: str) -> list[str]:
+    """Regiones que menciona el texto (con mayúscula) o que codifica el id."""
     found = {m.group(1) for m in REGION_EXACT.finditer(text)}
     found |= {_REGION_CODES[t] for t in chunk_id.split("-")[1:] if t in _REGION_CODES}
     return [r for r in REGIONS if r in found]
 
 
 def _kind_for_id(chunk_id: str) -> str:
+    """Tipo de fragmento según la forma del id (limitación, entrevista, afirmación del reporte...)."""
     if "-LIM-" in chunk_id:
         return "limitacion"
     if chunk_id.startswith("ENT-"):
@@ -111,6 +138,7 @@ def _kind_for_id(chunk_id: str) -> str:
 
 def _make_chunk(spec: DocSpec, chunk_id: str, section: str, kind: str, text: str,
                 page: int | None = None, metadata: dict | None = None) -> Chunk:
+    """Crea el fragmento y le antepone su contexto (documento y sección) al texto que se vectoriza."""
     context = " | ".join(part for part in (spec.title, section) if part)
     return Chunk(chunk_id=chunk_id, doc=spec.filename, doc_title=spec.title, doc_type=spec.doc_type,
                  section=section, kind=kind, text=text, embed_text=f"{context}\n{text}",
@@ -118,17 +146,20 @@ def _make_chunk(spec: DocSpec, chunk_id: str, section: str, kind: str, text: str
 
 
 def _row_text(header: list[str], row: list[str]) -> str:
+    """Fila de tabla -> 'Columna: valor | Columna: valor'."""
     return " | ".join(f"{h}: {c}" for h, c in zip(header, row))
 
 
 def _first_column_is_regions(rows: list[list[str]]) -> bool:
+    """¿La primera columna de la tabla son regiones? Entonces cada fila es un fragmento por región."""
     return len(rows) > 1 and all(row[0] in REGIONS for row in rows[1:])
 
 
-# ----------------------------------------------------------------- markdown
-
+# =====================================================================
+# BLOQUE: Troceado de Markdown
+# =====================================================================
 def chunk_markdown(blocks: list[Block], spec: DocSpec) -> list[Chunk]:
-    """One chunk per '##' section; tables are written as 'field: meaning' lines."""
+    """Un fragmento por sección '##'; las tablas se escriben como líneas 'campo: significado'."""
     chunks, heading, lines = [], None, []
 
     def flush():
@@ -148,14 +179,17 @@ def chunk_markdown(blocks: list[Block], spec: DocSpec) -> list[Chunk]:
     return chunks
 
 
-# ---------------------------------------------------------------------- pdf
-
+# =====================================================================
+# BLOQUE: Troceado de PDF
+# =====================================================================
 def chunk_pdf(blocks: list[Block], spec: DocSpec) -> list[Chunk]:
+    """Párrafos con id propio (INV-01...) -> un fragmento cada uno; el resto se numera por sección."""
     chunks: list[Chunk] = []
     section_number, section = 0, ""
     counters: dict[str, int] = defaultdict(int)
 
     def next_index(key: str) -> int:
+        """Siguiente número consecutivo para ids generados dentro de una sección."""
         counters[key] += 1
         return counters[key]
 
@@ -180,6 +214,7 @@ def chunk_pdf(blocks: list[Block], spec: DocSpec) -> list[Chunk]:
 
 
 def _table_chunks(block: Block, spec: DocSpec, section: str, section_number: int, next_index) -> list[Chunk]:
+    """Tabla por regiones -> un fragmento por fila; cualquier otra tabla -> un solo fragmento."""
     header, *rows = block.rows
     if _first_column_is_regions(block.rows):
         return [
@@ -193,19 +228,23 @@ def _table_chunks(block: Block, spec: DocSpec, section: str, section_number: int
     return [_make_chunk(spec, chunk_id, section, "tabla", text, block.page)]
 
 
-# --------------------------------------------------------------------- docx
-
+# =====================================================================
+# BLOQUE: Troceado de Word
+# =====================================================================
 def chunk_docx(blocks: list[Block], spec: DocSpec) -> list[Chunk]:
+    """Un hallazgo (encabezado con id + sus viñetas) o un párrafo -> un fragmento; las tablas van por fila."""
     chunks: list[Chunk] = []
     section_number, h1 = 0, ""
     pending: dict | None = None
     counters: dict[int, int] = defaultdict(int)
 
     def next_index() -> int:
+        """Siguiente número consecutivo dentro de la sección actual."""
         counters[section_number] += 1
         return counters[section_number]
 
     def flush():
+        """Cierra el hallazgo en curso y lo guarda como fragmento."""
         nonlocal pending
         if pending:
             text = f"{pending['title']}\n" + "\n".join(f"- {b}" for b in pending["bullets"])
@@ -244,12 +283,13 @@ def chunk_docx(blocks: list[Block], spec: DocSpec) -> list[Chunk]:
 
 
 def _docx_table_chunks(block: Block, spec: DocSpec, section: str) -> list[Chunk]:
+    """Cada fila de tabla es un fragmento: visita (CAM-xxx) o fila por región; otra cosa es un error."""
     header, *rows = block.rows
     chunks = []
     for row in rows:
         metadata = {_key(h): c for h, c in zip(header, row)}
         first = _ID_THEN_REST.match(row[0])
-        if first:  # "CAM-101  2026-04-09" -> id + date
+        if first:  # "CAM-101  2026-04-09" -> id + fecha
             chunk_id = first.group(1)
             row = [chunk_id, first.group(2)] + row[1:]
             fields = ["ID", "Fecha"] + header[1:]

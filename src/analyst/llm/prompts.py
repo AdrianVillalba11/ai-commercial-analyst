@@ -1,8 +1,12 @@
-"""Builds what the answering model sees: computed results, isolated evidence and the rules.
+"""
+ARMADO DEL PROMPT DE RESPUESTA
 
-Numbers reach the model already computed (by pandas) and labelled CALC-n. Document text goes
-between delimiters carrying a random per-request token, and the system prompt says that block is
-untrusted third-party text. The prompt is trimmed so it fits the model's context window.
+Qué hace: construye lo que ve el modelo que redacta: resultados calculados, evidencia aislada y reglas.
+Con qué se conecta: toma los cálculos de analytics/metrics.py y la evidencia de rag/retriever.py; el
+resultado va al redactor (answerer.py).
+Idea clave: las cifras llegan al modelo ya calculadas (por pandas) y etiquetadas CALC-n. El texto de los
+documentos va entre delimitadores con una clave aleatoria por petición, y el prompt de sistema declara
+ese bloque como texto de terceros no confiable. El prompt se recorta para caber en la ventana de contexto.
 """
 import secrets
 from dataclasses import dataclass
@@ -11,37 +15,46 @@ from analyst.analytics.metrics import ComparisonResult, GroupRow, SalesAnalyzer,
 from analyst.llm.schemas import AnalysisSpec, Plan
 from analyst.rag.retriever import RetrievedChunk
 
+# =====================================================================
+# BLOQUE: Constantes
+# =====================================================================
 BRAND = "Brio"
 BRAND_LABEL = "Brío"
-CHARS_PER_TOKEN = 3          # conservative for Spanish
+CHARS_PER_TOKEN = 3          # estimación conservadora para español
 MAX_CHUNK_CHARS = 700
 SAFETY_TOKENS = 150
-SIMILAR_SPREAD_PP = 1.0      # groups whose variations differ by less than this are described as "similar"
+SIMILAR_SPREAD_PP = 1.0      # grupos cuyas variaciones difieren menos que esto se describen como "similares"
 
 _DIMENSION_LABELS = {"region": "región", "canal": "canal", "presentacion": "presentación"}
 _METRIC_LABELS = {"venta_neta_cop": "venta neta (COP)", "unidades": "unidades"}
 
 
 def estimate_tokens(text: str) -> int:
+    """Estimación aproximada de tokens (redondeo hacia arriba)."""
     return -(-len(text) // CHARS_PER_TOKEN)
 
 
-# ------------------------------------------------------------ calculations
-
+# =====================================================================
+# BLOQUE: Bloques de cálculo (CALC-n)
+# =====================================================================
 @dataclass
 class CalcBlock:
+    """Un cálculo ya hecho, listo para mostrarse al modelo y a la interfaz."""
+
     calc_id: str
     title: str
-    text: str           # what the model sees
-    result: dict        # full ComparisonResult, for the UI and for validation
+    text: str           # lo que ve el modelo
+    result: dict        # ComparisonResult completo, para la interfaz y la validación
     spec: dict
 
 
 def spec_key(spec: AnalysisSpec) -> tuple:
+    """Clave para detectar cálculos repetidos."""
     return (tuple(spec.agrupar_por), spec.metrica, spec.region, spec.canal, spec.presentacion)
 
 
 def _filters(spec: AnalysisSpec) -> dict:
+    """Filtros del cálculo: "todas"/"todos" significa sin filtro."""
     filters = {}
     if spec.region != "todas":
         filters["region"] = spec.region
@@ -53,7 +66,7 @@ def _filters(spec: AnalysisSpec) -> dict:
 
 
 def similar_drops(rows: list[dict]) -> tuple[float, float] | None:
-    """(smallest, largest) variation when every group fell and they all differ by less than SIMILAR_SPREAD_PP."""
+    """(menor, mayor) variación cuando todos los grupos cayeron y difieren menos que SIMILAR_SPREAD_PP; si no, None."""
     values = [r["pct_change"] for r in rows if r["pct_change"] is not None]
     if len(values) > 1 and max(values) < 0 and max(values) - min(values) < SIMILAR_SPREAD_PP:
         return min(values), max(values)
@@ -61,6 +74,7 @@ def similar_drops(rows: list[dict]) -> tuple[float, float] | None:
 
 
 def _row_line(row: GroupRow, label: str, grouped: bool) -> str:
+    """Línea de texto de un grupo: T1, T2, variación y aporte al cambio total."""
     variation = format_pct(row.pct_change) if row.pct_change is not None else "variación % indefinida"
     line = (f"- {label}: T1 {format_number(row.t1)} | T2 {format_number(row.t2)} | "
             f"variación {format_number(row.abs_change)} ({variation})")
@@ -71,6 +85,7 @@ def _row_line(row: GroupRow, label: str, grouped: bool) -> str:
 
 
 def _render(calc_id: str, spec: AnalysisSpec, result: ComparisonResult) -> tuple[str, str]:
+    """Convierte un resultado en título y texto; resume la mayor caída o avisa si son caídas similares."""
     groups = " y ".join(_DIMENSION_LABELS[d] for d in spec.agrupar_por) or "total"
     filters = ", ".join(f"{k} = {','.join(v)}" for k, v in result.filters.items()) or "sin filtros"
     title = f"{BRAND_LABEL} — {_METRIC_LABELS[spec.metrica]} — por {groups} ({filters}), T2 frente a T1"
@@ -94,6 +109,7 @@ def _render(calc_id: str, spec: AnalysisSpec, result: ComparisonResult) -> tuple
 
 
 def build_calc_blocks(analyzer: SalesAnalyzer, plan: Plan) -> list[CalcBlock]:
+    """Ejecuta cada cálculo del plan con pandas y lo numera CALC-1, CALC-2..."""
     blocks = []
     for number, spec in enumerate(plan.analisis, start=1):
         result = analyzer.compare_periods(BRAND, group_by=spec.agrupar_por or None, metric=spec.metrica,
@@ -105,15 +121,18 @@ def build_calc_blocks(analyzer: SalesAnalyzer, plan: Plan) -> list[CalcBlock]:
 
 
 def quality_line(quality_notes: list[dict]) -> str:
+    """Frase que avisa cuántas filas de la marca se excluyeron por datos inválidos."""
     if not quality_notes:
         return ""
     items = ", ".join(f"{n['registro_id']} ({n['rule']})" for n in quality_notes)
     return f"Se excluyeron {len(quality_notes)} filas de {BRAND_LABEL} por datos inválidos: {items}."
 
 
-# ----------------------------------------------------------------- evidence
-
+# =====================================================================
+# BLOQUE: Evidencia de documentos
+# =====================================================================
 def format_evidence_line(item: RetrievedChunk) -> str:
+    """Una línea [ID] (documento; región) texto, recortando fragmentos muy largos."""
     chunk = item.chunk
     tag = chunk.doc_title + (f"; región: {', '.join(chunk.regions)}" if chunk.regions else "")
     text = chunk.text if len(chunk.text) <= MAX_CHUNK_CHARS else chunk.text[:MAX_CHUNK_CHARS].rstrip() + "…"
@@ -121,7 +140,7 @@ def format_evidence_line(item: RetrievedChunk) -> str:
 
 
 def fit_evidence(items: list[RetrievedChunk], budget_tokens: int) -> tuple[list[RetrievedChunk], int]:
-    """Keep the best-ranked fragments that fit in the budget; returns them and how many were dropped."""
+    """Conserva los fragmentos mejor clasificados que caben en el presupuesto; devuelve cuáles y cuántos se descartaron."""
     kept, used = [], 0
     for item in items:
         cost = estimate_tokens(format_evidence_line(item)) + 1
@@ -132,9 +151,11 @@ def fit_evidence(items: list[RetrievedChunk], budget_tokens: int) -> tuple[list[
     return kept, len(items) - len(kept)
 
 
-# ------------------------------------------------------------------ prompts
-
+# =====================================================================
+# BLOQUE: Prompts
+# =====================================================================
 def answer_system_prompt(nonce: str) -> str:
+    """Reglas del redactor. El nonce delimita el bloque de evidencia (texto de terceros)."""
     return (
         "Eres un analista comercial de Almena Foods. Respondes SOLO con JSON que cumpla el esquema.\n"
         f"Contexto: se analiza la marca {BRAND_LABEL}, ventas netas del segundo trimestre (abr-jun 2026) frente al primero (ene-mar 2026).\n"
@@ -158,6 +179,8 @@ def answer_system_prompt(nonce: str) -> str:
 
 @dataclass
 class PromptBundle:
+    """Prompt completo y qué evidencia entró (o se descartó) para que cupiera."""
+
     system: str
     user: str
     nonce: str
@@ -168,6 +191,7 @@ class PromptBundle:
 def build_answer_prompt(question: str, calc_blocks: list[CalcBlock], evidence: list[RetrievedChunk],
                         quality_notes: list[dict], *, use_documents: bool, num_ctx: int, max_output_tokens: int,
                         nonce: str | None = None) -> PromptBundle:
+    """Arma el prompt: pregunta, cálculos, notas de calidad y evidencia ajustada al contexto del modelo."""
     nonce = nonce or secrets.token_hex(4)
     system = answer_system_prompt(nonce)
     parts = [f"PREGUNTA: {question}", "",
@@ -181,7 +205,7 @@ def build_answer_prompt(question: str, calc_blocks: list[CalcBlock], evidence: l
     if not use_documents:
         return PromptBundle(system, head + "\n\n(Esta pregunta no requiere documentos.)", nonce, [], 0)
 
-    fixed = estimate_tokens(system) + estimate_tokens(head) + 60   # 60: headers and delimiters
+    fixed = estimate_tokens(system) + estimate_tokens(head) + 60   # 60: encabezados y delimitadores
     budget = num_ctx - max_output_tokens - fixed - SAFETY_TOKENS
     kept, dropped = fit_evidence(evidence, max(budget, 0))
     if kept:

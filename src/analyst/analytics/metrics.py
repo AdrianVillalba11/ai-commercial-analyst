@@ -1,9 +1,13 @@
-"""Commercial metrics: T1 vs T2 comparisons computed with pandas.
+"""
+MÉTRICAS COMERCIALES (T1 vs T2)
 
-All figures in an answer must come from here. The LLM only chooses which analysis to
-request (within the closed catalog below); it never does arithmetic.
-Convention (01_Contexto_Negocio.md): T1 = Jan-Mar 2026, T2 = Apr-Jun 2026,
-absolute change = T2 - T1, percentage change = (T2 / T1 - 1) x 100.
+Qué hace: calcula con pandas las comparaciones entre trimestres (totales y por región, canal,
+presentación o punto de venta).
+Con qué se conecta: lo usa guardrails/facts.py y el servicio; el LLM nunca calcula.
+Idea clave: toda cifra de una respuesta sale de aquí. El modelo solo elige QUÉ análisis pedir
+(dentro del catálogo cerrado de abajo); la aritmética es siempre de código.
+Convención (01_Contexto_Negocio.md): T1 = ene-mar 2026, T2 = abr-jun 2026,
+cambio absoluto = T2 - T1, cambio porcentual = (T2 / T1 - 1) x 100.
 """
 from dataclasses import asdict, dataclass, field
 
@@ -14,19 +18,28 @@ from analyst.data.cleaning import BRANDS, CHANNELS, PRESENTATIONS, REGIONS, VALI
 from analyst.data.quality_report import EXCLUDED, QualityReport
 from analyst.text import fold
 
+# =====================================================================
+# BLOQUE: Catálogo cerrado de análisis posibles
+# =====================================================================
 T1_MONTHS = VALID_MONTHS[:3]
 # Complemento de T1 (abr-jun). La clasificación usa "todo lo que no es T1", así que no se lee;
 # se deja para que el par T1/T2 quede explícito.
 T2_MONTHS = VALID_MONTHS[3:]
 
+# Métricas, dimensiones de agrupación y filtros permitidos (lo único que el modelo puede pedir).
 METRICS = ["venta_neta_cop", "unidades"]
 GROUPABLE = ["region", "canal", "presentacion", "punto_venta_id"]
 _FILTER_VALUES = {"region": REGIONS, "canal": CHANNELS, "presentacion": PRESENTATIONS}
 FILTERABLE = list(_FILTER_VALUES) + ["punto_venta_id"]
 
 
+# =====================================================================
+# BLOQUE: Estructuras de resultado
+# =====================================================================
 @dataclass
 class GroupRow:
+    """Una fila del resultado: un grupo (o el total) con T1, T2, cambios y el cálculo en texto."""
+
     keys: dict
     t1: float
     t2: float
@@ -41,6 +54,8 @@ class GroupRow:
 
 @dataclass
 class ComparisonResult:
+    """Resultado de comparar T1 vs T2 para una marca: filas por grupo, total y avisos de calidad."""
+
     marca: str
     metric: str
     group_by: list[str]
@@ -51,7 +66,7 @@ class ComparisonResult:
     message: str = ""
 
     def largest_drop(self) -> GroupRow | None:
-        """Group with the lowest percentage change, only if it is an actual drop (< 0)."""
+        """Grupo con el menor cambio porcentual, solo si es una caída real (< 0)."""
         candidates = [r for r in self.rows if r.pct_change is not None]
         if not candidates:
             return None
@@ -64,6 +79,8 @@ class ComparisonResult:
 
 @dataclass
 class MonthlySeries:
+    """Serie mes a mes (ene-jun) de una métrica. Disponible para una vista mensual; la app aún no la expone."""
+
     marca: str
     metric: str
     filters: dict
@@ -74,7 +91,11 @@ class MonthlySeries:
         return asdict(self)
 
 
+# =====================================================================
+# BLOQUE: Validación y formato de números
+# =====================================================================
 def _canonical(value, allowed: list[str], label: str) -> str:
+    """Devuelve la forma oficial del valor (ignora mayúsculas, tildes y espacios) o lanza ValueError."""
     lookup = {fold(a): a for a in allowed}
     found = lookup.get(fold(str(value).strip()))
     if found is None:
@@ -83,25 +104,33 @@ def _canonical(value, allowed: list[str], label: str) -> str:
 
 
 def _fmt_number(value: float) -> str:
+    """Formato colombiano: punto para miles y coma para decimales (1.234.567 / 1.234,50)."""
     if float(value).is_integer():
         return f"{int(value):,}".replace(",", ".")
     return f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def _fmt_pct(value: float) -> str:
+    """Porcentaje con dos decimales y coma: 12,34 %."""
     return f"{value:.2f}".replace(".", ",") + " %"
 
 
-format_number = _fmt_number   # public names for the prompt builder and the UI
+format_number = _fmt_number   # nombres públicos para el armado del prompt y la interfaz
 format_pct = _fmt_pct
 
 
 def _python_number(value):
+    """Convierte tipos de numpy a int/float de Python (para poder pasarlos a JSON)."""
     value = value.item() if hasattr(value, "item") else value
     return int(value) if float(value).is_integer() else float(value)
 
 
+# =====================================================================
+# BLOQUE: Analizador de ventas
+# =====================================================================
 class SalesAnalyzer:
+    """Calcula comparaciones sobre la tabla limpia. Recibe también el reporte para avisar de exclusiones."""
+
     def __init__(self, data: pd.DataFrame, report: QualityReport | None = None):
         self._data = data
         self._report = report
@@ -110,10 +139,11 @@ class SalesAnalyzer:
     def columns(self) -> list[str]:
         return list(self._data.columns)
 
-    # ---- public API ----
+    # ---- API pública ----
 
     def compare_periods(self, marca: str, group_by=None, metric: str = "venta_neta_cop",
                         filters: dict | None = None) -> ComparisonResult:
+        """Compara T1 vs T2 de una marca, opcionalmente agrupando por dimensiones y filtrando."""
         marca = _canonical(marca, BRANDS, "Marca")
         metric = self._validate_metric(metric)
         keys = self._validate_group_by(group_by)
@@ -125,6 +155,7 @@ class SalesAnalyzer:
                                     quality_notes=self._quality_notes(marca),
                                     message="No hay registros para la marca y los filtros indicados.")
 
+        # Cada fila se etiqueta T1 si su mes es ene-mar; si no, T2.
         df = df.assign(periodo=np.where(df["mes"].isin(T1_MONTHS), "T1", "T2"))
         total_values = df.groupby("periodo")[metric].sum().reindex(["T1", "T2"], fill_value=0)
         total_counts = df.groupby("periodo")[metric].count().reindex(["T1", "T2"], fill_value=0)
@@ -132,6 +163,7 @@ class SalesAnalyzer:
         total = self._build_row({}, total_values["T1"], total_values["T2"],
                                 total_counts["T1"], total_counts["T2"], total_change=None)
 
+        # Una fila por grupo; se ordenan de la mayor caída a la mayor subida (los None al final).
         rows = []
         if keys:
             sums = df.pivot_table(index=keys, columns="periodo", values=metric,
@@ -150,6 +182,7 @@ class SalesAnalyzer:
 
     def monthly_series(self, marca: str, metric: str = "venta_neta_cop",
                        filters: dict | None = None) -> MonthlySeries:
+        """Suma la métrica mes a mes (ene-jun), con cero en los meses sin registros."""
         marca = _canonical(marca, BRANDS, "Marca")
         metric = self._validate_metric(metric)
         filters = self._validate_filters(filters)
@@ -159,15 +192,17 @@ class SalesAnalyzer:
         points = [{"mes": m, "value": _python_number(sums[m]), "n": int(counts[m])} for m in VALID_MONTHS]
         return MonthlySeries(marca, metric, filters, points, self._quality_notes(marca))
 
-    # ---- internals ----
+    # ---- Internos ----
 
     def _select(self, marca: str, filters: dict) -> pd.DataFrame:
+        """Filas de la marca en los meses válidos que cumplen los filtros."""
         df = self._data[(self._data["marca"] == marca) & self._data["mes"].isin(VALID_MONTHS)]
         for col, values in filters.items():
             df = df[df[col].isin(values)]
         return df
 
     def _build_row(self, keys, t1, t2, n1, n2, total_change) -> GroupRow:
+        """Arma la fila con cambios absoluto y porcentual, aporte al cambio total y el cálculo explicado."""
         t1, t2 = _python_number(t1), _python_number(t2)
         abs_change = _python_number(t2 - t1)
         notes = []
@@ -191,6 +226,7 @@ class SalesAnalyzer:
                         calculation=calculation, notes=notes)
 
     def _quality_notes(self, marca: str) -> list[dict]:
+        """Filas excluidas de la marca, para avisar que las cifras no las incluyen."""
         if self._report is None:
             return []
         return [
@@ -200,12 +236,14 @@ class SalesAnalyzer:
 
     @staticmethod
     def _validate_metric(metric: str) -> str:
+        """Comprueba que la métrica esté en el catálogo."""
         if metric not in METRICS:
             raise ValueError(f"Métrica no válida: {metric!r}. Opciones: {METRICS}")
         return metric
 
     @staticmethod
     def _validate_group_by(group_by) -> list[str]:
+        """Normaliza las dimensiones de agrupación (sin repetidas)."""
         if group_by is None:
             return []
         if isinstance(group_by, str):
@@ -219,6 +257,7 @@ class SalesAnalyzer:
 
     @staticmethod
     def _validate_filters(filters: dict | None) -> dict:
+        """Normaliza los filtros a {columna: [valores oficiales]}."""
         clean = {}
         for col, value in (filters or {}).items():
             canon_col = _canonical(col, FILTERABLE, "Filtro")

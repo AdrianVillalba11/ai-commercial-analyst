@@ -1,8 +1,10 @@
-"""Tests for document parsing and chunking.
+"""
+PRUEBAS DE LECTURA Y TROCEADO DE DOCUMENTOS
 
-The PDF table tests are the key ones: a plain text extraction mixes up the cells of the
-consumer study's regional table, so the expected cells here were checked against the
-rendered page image.
+Qué verifica: docs/parser.py y docs/chunker.py: tablas de PDF reconstruidas, encabezados y pies de página
+eliminados, ids de evidencia, regiones, metadatos y errores claros si falta un archivo.
+Cómo: las pruebas de tablas PDF son las clave: la extracción de texto plano mezcla las celdas de la tabla regional
+del estudio de consumidor, así que las celdas esperadas se comprobaron contra la imagen de la página renderizada.
 """
 from collections import Counter
 
@@ -21,10 +23,13 @@ REPORT_PDF = RAW / "05_Reporte_Comercial.pdf"
 
 
 def tables_of(path):
+    """Tablas de todas las páginas de un PDF."""
     return [b for b in parse_pdf(path) if b.kind == "table"]
 
 
-# ---------------------------------------------------- PDF table reconstruction
+# =====================================================================
+# BLOQUE: Reconstrucción de tablas en PDF
+# =====================================================================
 
 def test_consumer_regional_table_cells_are_assigned_to_the_right_region():
     regional = [t for t in tables_of(CONSUMER_PDF) if t.rows[0][0] == "Región"][0]
@@ -41,7 +46,7 @@ def test_consumer_regional_table_cells_are_assigned_to_the_right_region():
 
 @pytest.mark.parametrize("path", [CONSUMER_PDF, REPORT_PDF])
 def test_no_word_is_lost_or_duplicated_when_rebuilding_tables(path):
-    """Every word inside a table's area must appear exactly once across its rebuilt cells."""
+    """Cada palabra dentro del área de una tabla debe aparecer exactamente una vez entre sus celdas reconstruidas."""
     rebuilt = tables_of(path)
     with pdfplumber.open(path) as pdf:
         originals = []
@@ -69,18 +74,22 @@ def test_pdf_headers_and_footers_are_removed():
 def test_pdf_paragraphs_are_whole_statements():
     paragraphs = {b.text[:6]: b.text for b in parse_pdf(CONSUMER_PDF) if b.kind == "paragraph"}
     assert paragraphs["INV-01"].endswith("ventas de Brío.")
-    assert "alternativas de menor precio" in paragraphs["INV-01"]   # lines were joined
+    assert "alternativas de menor precio" in paragraphs["INV-01"]   # las líneas se unieron
 
 
-# ------------------------------------------------------------- real chunks
+# =====================================================================
+# BLOQUE: Fragmentos de los documentos reales
+# =====================================================================
 
 @pytest.fixture(scope="module")
 def chunks():
+    """Todos los fragmentos reales, cargados una sola vez."""
     return load_all_chunks()
 
 
 @pytest.fixture(scope="module")
 def by_id(chunks):
+    """Los fragmentos indexados por su id."""
     return {c.chunk_id: c for c in chunks}
 
 
@@ -112,7 +121,7 @@ def test_chunk_content_is_correct(by_id):
 
 def test_regions_metadata(by_id):
     assert by_id["INV-02"].regions == ["Centro", "Sur"]
-    assert by_id["ENT-SUR-03"].regions == ["Sur"]          # from the id: the quote never says "Sur"
+    assert by_id["ENT-SUR-03"].regions == ["Sur"]          # sale del id: la cita nunca dice "Sur"
     assert by_id["OC-OCC-05"].regions == ["Occidente"]
     assert by_id["CAM-145"].regions == ["Occidente"]
 
@@ -127,7 +136,7 @@ def test_visit_observations_keep_the_point_of_sale_for_cross_referencing(by_id):
 def test_imported_vendor_note_is_extracted_and_marked(by_id):
     note = by_id["OC-EXT-06"]
     assert note.kind == "dato_importado"
-    assert "INSTRUCCIÓN" in note.text            # task 5 needs the raw text to detect it
+    assert "INSTRUCCIÓN" in note.text            # la tarea 5 necesita el texto crudo para detectarlo
     assert "Registro adicional recibido de un proveedor" in note.section
 
 
@@ -142,7 +151,9 @@ def test_chunks_are_serializable(chunks):
     assert all(isinstance(c.to_dict(), dict) for c in chunks)
 
 
-# ------------------------------------------------- generic behaviour (synthetic)
+# =====================================================================
+# BLOQUE: Comportamiento general (casos sintéticos)
+# =====================================================================
 
 SPEC = DocSpec("x.pdf", "ZZ", "Documento de prueba", "prueba")
 

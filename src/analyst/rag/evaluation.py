@@ -1,14 +1,23 @@
-"""Retrieval quality check: reference questions with the evidence ids that should come back.
+"""
+EVALUACIÓN DE LA BÚSQUEDA
 
-Two disjoint sets, fixed before measuring anything and never adjusted to the results:
-- RETRIEVAL_CASES: used to choose the fusion weights.
-- VALIDATION_CASES: written afterwards and only used to confirm the choice (no tuning on it).
+Qué hace: mide qué tan bien encuentra el buscador la evidencia correcta, con preguntas de referencia
+y los ids de fragmentos que deberían volver.
+Con qué se conecta: lo usan tests/test_retrieval_quality.py y los scripts de evaluación; no interviene
+cuando la app responde preguntas.
+Idea clave: dos conjuntos separados, fijados ANTES de medir y nunca ajustados a los resultados:
+- RETRIEVAL_CASES: sirvió para elegir los pesos de la fusión.
+- VALIDATION_CASES: escrito después y usado solo para confirmar la elección (sin ajustar nada con él).
 """
 import math
 from dataclasses import dataclass
 
 from analyst.rag.retriever import HybridRetriever
 
+# =====================================================================
+# BLOQUE: Casos de referencia
+# Cada caso: (pregunta, ids de evidencia que deberían aparecer entre los primeros TOP_K).
+# =====================================================================
 TOP_K = 6
 
 RETRIEVAL_CASES: list[tuple[str, set[str]]] = [
@@ -44,8 +53,15 @@ VALIDATION_CASES: list[tuple[str, set[str]]] = [
 ]
 
 
+# =====================================================================
+# BLOQUE: Métricas por caso y por modo
+# hit: ¿apareció alguno esperado? recall/precision: cobertura y exactitud. top1/MRR: qué tan arriba
+# queda el primer acierto. nDCG: premia que los aciertos estén en las primeras posiciones.
+# =====================================================================
 @dataclass
 class CaseResult:
+    """Resultado de una pregunta de referencia: lo esperado frente a lo recuperado."""
+
     question: str
     expected: set[str]
     retrieved: list[str]
@@ -82,10 +98,13 @@ class CaseResult:
 
 @dataclass
 class ModeSummary:
+    """Promedios de las métricas para un modo de búsqueda sobre todos los casos."""
+
     mode: str
     cases: list[CaseResult]
 
     def _mean(self, attr: str) -> float:
+        """Promedio de un atributo numérico (o booleano) de los casos."""
         return sum(float(getattr(c, attr)) for c in self.cases) / len(self.cases)
 
     @property
@@ -113,8 +132,12 @@ class ModeSummary:
         return sum(1 / c.first_rank if c.first_rank else 0.0 for c in self.cases) / len(self.cases)
 
 
+# =====================================================================
+# BLOQUE: Ejecución
+# =====================================================================
 def evaluate(retriever: HybridRetriever, modes=("lexical", "semantic", "hybrid"), top_k: int = TOP_K,
              cases: list[tuple[str, set[str]]] | None = None) -> dict[str, ModeSummary]:
+    """Corre los casos en cada modo y devuelve un resumen por modo."""
     cases = RETRIEVAL_CASES if cases is None else cases
     summaries = {}
     for mode in modes:

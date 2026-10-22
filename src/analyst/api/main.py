@@ -1,7 +1,11 @@
-"""Web API and page.
+"""
+API WEB Y PÁGINA
 
-One question at a time (Ollama serves one generation at a time), bound to 127.0.0.1 by `run.py`.
-Everything the page shows comes from here; the page itself renders it as plain text.
+Qué hace: expone la aplicación con FastAPI: sirve la página (carpeta web/) y los endpoints que ella consume
+(preguntar, estado de salud, calidad de datos, alertas de seguridad, evidencia).
+Con qué se conecta: usa service.py; la lanza run.py. La página (web/app.js) consume estos endpoints.
+Idea clave: se atiende UNA pregunta a la vez (Ollama genera de a una) y el servidor escucha solo en
+127.0.0.1. Todo lo que muestra la página sale de aquí, y la página lo dibuja como texto plano.
 """
 import json
 import logging
@@ -20,19 +24,28 @@ from analyst.config import PROJECT_ROOT, settings
 from analyst.errors import OllamaError
 from analyst.service import AnalystService, build_default_service
 
+# =====================================================================
+# BLOQUE: Constantes y modelos de entrada
+# =====================================================================
 log = logging.getLogger("analyst")
 WEB_DIR = PROJECT_ROOT / "web"
+# Política de seguridad del navegador: solo recursos propios, sin scripts ni estilos externos.
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
        "base-uri 'none'; frame-ancestors 'none'")
 
 
 class AskRequest(BaseModel):
+    """Cuerpo de una pregunta: el texto y, opcionalmente, el modo de búsqueda."""
+
     question: str
     mode: Literal["semantic", "hybrid", "lexical"] | None = None
 
 
+# =====================================================================
+# BLOQUE: Ayudantes
+# =====================================================================
 def check_ollama(base_url: str, chat_model: str, embedding_model: str, timeout: float = 2.0) -> dict:
-    """Is Ollama running, and are the two models downloaded?"""
+    """¿Ollama está en ejecución y están descargados los dos modelos?"""
     def entry(name: str, available: bool) -> dict:
         return {"name": name, "available": available}
 
@@ -47,7 +60,7 @@ def check_ollama(base_url: str, chat_model: str, embedding_model: str, timeout: 
 
 
 def error_payload(exc: Exception) -> tuple[int, str]:
-    """(status, message for the person). Internal details are logged, never sent."""
+    """(código HTTP, mensaje para la persona). Los detalles internos se registran en consola y nunca se envían."""
     if isinstance(exc, ValueError):
         return 400, str(exc)
     if isinstance(exc, OllamaError):
@@ -57,15 +70,19 @@ def error_payload(exc: Exception) -> tuple[int, str]:
 
 
 def sse(event: str, data: dict) -> str:
+    """Da formato de evento SSE (Server-Sent Events) para enviar el progreso al navegador."""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def create_app(service: AnalystService | None = None, *, warm_up: bool = True,
                service_factory: Callable[[], AnalystService] = build_default_service) -> FastAPI:
+    """Crea la aplicación. Recibir el servicio por parámetro permite probarla con uno falso."""
+    # Un solo candado: una pregunta a la vez.
     ask_lock = threading.Lock()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        """Al arrancar: construye el servicio y calienta los modelos en segundo plano (la página ya abre mientras tanto)."""
         if app.state.service is None:
             app.state.service = service_factory()
         app.state.warm = {"state": "pending", "detail": ""}
@@ -76,10 +93,11 @@ def create_app(service: AnalystService | None = None, *, warm_up: bool = True,
         yield
 
     def _warm(app: FastAPI) -> None:
+        """Calentamiento en segundo plano; el estado queda en app.state.warm para que la página lo muestre."""
         try:
             app.state.service.warm_up()
             app.state.warm = {"state": "ready", "detail": ""}
-        except Exception as exc:       # noqa: BLE001 - the page shows the reason instead of failing the app
+        except Exception as exc:       # noqa: BLE001 - la página muestra el motivo en vez de romper la app
             app.state.warm = {"state": "error", "detail": str(exc)}
 
     app = FastAPI(title="Analista comercial de Brío", lifespan=lifespan)
@@ -88,6 +106,7 @@ def create_app(service: AnalystService | None = None, *, warm_up: bool = True,
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
+        """Agrega a cada respuesta las cabeceras de seguridad (y sin caché en /api/)."""
         response = await call_next(request)
         response.headers["Content-Security-Policy"] = CSP
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -96,9 +115,12 @@ def create_app(service: AnalystService | None = None, *, warm_up: bool = True,
         return response
 
     def svc() -> AnalystService:
+        """El servicio actual."""
         return app.state.service
 
-    # ------------------------------------------------------------- page
+    # =====================================================================
+    # BLOQUE: Página
+    # =====================================================================
 
     @app.get("/", include_in_schema=False)
     def index():
@@ -106,22 +128,26 @@ def create_app(service: AnalystService | None = None, *, warm_up: bool = True,
 
     app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
-    # --------------------------------------------------------------- ask
+    # =====================================================================
+    # BLOQUE: Preguntar (respuesta completa y respuesta con progreso en vivo)
+    # =====================================================================
 
     @app.post("/api/ask")
     def ask(body: AskRequest):
         try:
             with ask_lock:
                 return svc().ask(body.question, mode=body.mode).to_dict()
-        except Exception as exc:       # noqa: BLE001 - mapped to a status and a message for the person
+        except Exception as exc:       # noqa: BLE001 - se traduce a un código HTTP y un mensaje para la persona
             status, detail = error_payload(exc)
             return JSONResponse({"detail": detail}, status_code=status)
 
     @app.post("/api/ask/stream")
     def ask_stream(body: AskRequest):
+        """Igual que /api/ask, pero enviando el avance de cada paso mientras se trabaja (SSE)."""
         events: queue.Queue = queue.Queue()
 
         def work() -> None:
+            """Hilo de trabajo: hace la pregunta y deja los eventos en la cola."""
             try:
                 with ask_lock:
                     result = svc().ask(body.question, mode=body.mode, progress=lambda s: events.put(sse("step", {"step": s})))
@@ -134,15 +160,19 @@ def create_app(service: AnalystService | None = None, *, warm_up: bool = True,
         threading.Thread(target=work, daemon=True).start()
 
         def stream() -> Iterator[str]:
+            """Entrega los eventos al navegador a medida que aparecen, hasta recibir el final (None)."""
             while (item := events.get()) is not None:
                 yield item
 
         return StreamingResponse(stream(), media_type="text/event-stream")
 
-    # ----------------------------------------------------- information
+    # =====================================================================
+    # BLOQUE: Información (estado, calidad de datos, seguridad, evidencia)
+    # =====================================================================
 
     @app.get("/api/health")
     def health():
+        """Estado para la cabecera de la página: Ollama, modelos, calentamiento, documentos y filas de ventas."""
         ollama = check_ollama(settings.ollama_base_url, settings.llm_model, settings.embedding_model)
         summary = svc().data_quality().get("summary", {}) if svc() else {}
         return {**ollama, "warm": app.state.warm, "retrieval_mode": settings.retrieval_mode,
@@ -158,6 +188,7 @@ def create_app(service: AnalystService | None = None, *, warm_up: bool = True,
 
     @app.get("/api/evidence/{chunk_id}")
     def evidence(chunk_id: str):
+        """Texto de un fragmento de evidencia citado en una respuesta."""
         chunk = svc().get_chunk(chunk_id)
         if chunk is None:
             raise HTTPException(status_code=404, detail="No existe un fragmento de evidencia con ese ID.")
@@ -167,4 +198,5 @@ def create_app(service: AnalystService | None = None, *, warm_up: bool = True,
     return app
 
 
+# Instancia que usa run.py (uvicorn).
 app = create_app()

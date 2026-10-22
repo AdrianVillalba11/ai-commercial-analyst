@@ -1,4 +1,12 @@
-"""One place for talking HTTP to Ollama, so every caller reports failures the same way."""
+"""
+COMUNICACIÓN HTTP CON OLLAMA
+
+Qué hace: una única función para enviar peticiones a Ollama y traducir cualquier fallo a un
+mensaje claro en español.
+Con qué se conecta: la usan el cliente de generación (llm/ollama_client.py) y el de
+embeddings (rag/embedder.py).
+Idea clave: así ambos informan los errores exactamente igual.
+"""
 import httpx
 
 from analyst.errors import OllamaError
@@ -6,7 +14,7 @@ from analyst.errors import OllamaError
 
 def post_json(client: httpx.Client, base_url: str, path: str, payload: dict, *,
               timeout: float, model: str, purpose: str) -> dict:
-    """POST to Ollama and return the JSON body. Every failure becomes an OllamaError that says what to do."""
+    """Envía un POST a Ollama y devuelve el JSON. Todo fallo se convierte en un OllamaError que dice qué hacer."""
     try:
         response = client.post(f"{base_url}{path}", json=payload, timeout=timeout)
     except httpx.ConnectError as exc:

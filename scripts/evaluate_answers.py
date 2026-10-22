@@ -1,15 +1,19 @@
-"""Short evaluation of the whole pipeline: hybrid vs semantic retrieval, with llama3, over 8 questions.
+"""
+EVALUACIÓN CORTA DEL FLUJO COMPLETO
 
-Run:  python scripts/evaluate_answers.py        (about 3 minutes; needs Ollama with the models)
+Qué hace: compara la búsqueda híbrida con la semántica sobre 8 preguntas, usando llama3 de extremo a extremo.
+Con qué se conecta: usa service.py; sus resultados se resumen en docs/EVALUACIONES.md.
 
-Metrics and the decision rule were fixed BEFORE running it, and are not adjusted to the results:
-  1. Main metric: share of the model's checkable claims that survive the validator
-     (checkable = hypotheses + document-based facts + contradictions; facts that only repeat a
-     calculation are not counted because the code already states them).
-  2. Coverage: for questions with expected evidence, whether the final answer cites at least one of
-     the expected ids.
-  3. Tie-break: average time.
-Rule: pick the mode with the higher share of surviving claims, provided its coverage is not lower.
+Ejecutar:  python scripts/evaluate_answers.py        (unos 3 minutos; necesita Ollama con los modelos)
+
+Las métricas y la regla de decisión se fijaron ANTES de correrlo y no se ajustan a los resultados:
+  1. Métrica principal: proporción de las afirmaciones verificables del modelo que sobreviven al validador
+     (verificables = hipótesis + hechos basados en documentos + contradicciones; los hechos que solo repiten
+     un cálculo no cuentan porque el código ya los enuncia).
+  2. Cobertura: en las preguntas con evidencia esperada, si la respuesta final cita al menos uno de los
+     ids esperados.
+  3. Desempate: tiempo promedio.
+Regla: se elige el modo con mayor proporción de afirmaciones que sobreviven, siempre que su cobertura no sea menor.
 """
 import sys
 from dataclasses import dataclass
@@ -19,6 +23,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from analyst.service import AskResult, build_default_service  # noqa: E402
 
+# =====================================================================
+# BLOQUE: Preguntas de la evaluación
+# Cada una: (nombre, pregunta, ids de evidencia esperados o None si no aplica).
+# =====================================================================
 QUESTIONS: list[tuple[str, str, set[str] | None]] = [
     ("cuantitativa", "¿Cuál fue la región con mayor caída porcentual en ventas netas de Brío entre T1 y T2 de 2026? "
                      "Muestra los valores y el cálculo.", None),
@@ -38,8 +46,13 @@ QUESTIONS: list[tuple[str, str, set[str] | None]] = [
 MODES = ("hybrid", "semantic")
 
 
+# =====================================================================
+# BLOQUE: Puntaje por pregunta y resumen
+# =====================================================================
 @dataclass
 class QuestionScore:
+    """Resultado de una pregunta: afirmaciones verificables, descartadas, cobertura y tiempo."""
+
     name: str
     checkable: int
     discarded: int
@@ -48,6 +61,7 @@ class QuestionScore:
 
 
 def score(name: str, expected: set[str] | None, result: AskResult) -> QuestionScore:
+    """Cuenta qué afirmaciones eran verificables, cuántas descartó el validador y si se citó evidencia esperada."""
     raw = result.answer
     doc_ids = {e.chunk_id for e in result.evidence}
     checkable = (len(raw.hipotesis) + (0 if result.contrast else len(raw.contradicciones)) +
@@ -60,6 +74,7 @@ def score(name: str, expected: set[str] | None, result: AskResult) -> QuestionSc
 
 
 def summarize(scores: list[QuestionScore]) -> dict:
+    """Agrega los puntajes de un modo: proporción que sobrevive, cobertura y tiempo medio."""
     checkable = sum(s.checkable for s in scores)
     discarded = sum(s.discarded for s in scores)
     with_expected = [s for s in scores if s.covered is not None]
@@ -72,9 +87,13 @@ def summarize(scores: list[QuestionScore]) -> dict:
     }
 
 
+# =====================================================================
+# BLOQUE: Ejecución y decisión
+# =====================================================================
 def main() -> int:
+    """Corre las preguntas en cada modo, imprime la tabla y aplica la regla de decisión."""
     service = build_default_service()
-    service.ask("¿Cuál es la capital de Francia?")          # warm-up: loads the models
+    service.ask("¿Cuál es la capital de Francia?")          # calentamiento: carga los modelos
     table: dict[str, list[QuestionScore]] = {}
     for mode in MODES:
         table[mode] = []
@@ -84,11 +103,13 @@ def main() -> int:
             s = table[mode][-1]
             print(f"  {mode:9} {name:14} checkable={s.checkable} descartadas={s.discarded} "
                   f"cobertura={'-' if s.covered is None else int(s.covered)} {s.seconds:.1f}s", flush=True)
+    # Tabla resumen por modo.
     print(f"\n{'modo':10} {'afirmaciones válidas':>21} {'cobertura':>10} {'tiempo medio':>13}")
     summaries = {mode: summarize(scores) for mode, scores in table.items()}
     for mode, m in summaries.items():
         print(f"{mode:10} {m['surviving']:>14.0%} ({m['checkable'] - m['discarded']}/{m['checkable']}) "
               f"{m['covered']:>7} {m['seconds']:>12.1f}s")
+    # Regla de decisión fijada de antemano.
     a, b = (summaries[m] for m in MODES)
     if abs(a["surviving"] - b["surviving"]) < 1e-9:
         winner = MODES[0] if a["seconds"] <= b["seconds"] else MODES[1]

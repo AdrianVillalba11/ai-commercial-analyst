@@ -1,4 +1,15 @@
-/* Light theme only, on purpose. */
+/*
+  ESTILOS DE LA PÁGINA
+
+  Qué es: toda la apariencia de web/index.html y de las tarjetas que dibuja web/app.js.
+  Idea clave: solo tema claro, a propósito (la interfaz se pensó para leerse bien en una demostración).
+  Los colores están como variables en :root, para cambiarlos en un solo lugar.
+  Bloques: variables y base -> barra superior -> controles -> progreso -> respuesta -> panel lateral -> móvil.
+*/
+
+/* =====================================================================
+   BLOQUE: Variables de color y base
+   ===================================================================== */
 :root {
   color-scheme: light;
   --bg: #f4f6f9;
@@ -27,10 +38,13 @@ body {
   line-height: 1.5;
 }
 
+/* Texto solo para lectores de pantalla (accesibilidad). */
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 [hidden] { display: none !important; }
 
-/* ---------------------------------------------------------------- top bar */
+/* =====================================================================
+   BLOQUE: Barra superior y tarjetas
+   ===================================================================== */
 .topbar {
   display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;
   padding: 0.9rem 1.5rem; background: var(--card); border-bottom: 1px solid var(--line);
@@ -51,7 +65,9 @@ h3 { font-size: 1.02rem; margin: 0 0 0.3rem; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.1rem 1.25rem; margin-bottom: 1rem; }
 .subtitle, .hint { color: var(--muted); font-size: 0.82rem; margin: 0 0 0.6rem; }
 
-/* ---------------------------------------------------------------- controls */
+/* =====================================================================
+   BLOQUE: Controles (texto, botones, opciones y chips de ejemplo)
+   ===================================================================== */
 textarea, select {
   width: 100%; font: inherit; color: var(--text); background: #fff;
   border: 1px solid #b7c0cc; border-radius: 8px; padding: 0.6rem 0.75rem;
@@ -82,7 +98,9 @@ button { font: inherit; cursor: pointer; }
 }
 .chip:hover { background: #d3e3f1; }
 
-/* ---------------------------------------------------------------- progress */
+/* =====================================================================
+   BLOQUE: Progreso y avisos de error
+   ===================================================================== */
 .progress ol { list-style: none; margin: 0; padding: 0; }
 .progress li { padding: 0.2rem 0; color: var(--muted); }
 .progress li.active { color: var(--text); font-weight: 600; }
@@ -92,7 +110,9 @@ button { font: inherit; cursor: pointer; }
 .banner { border-radius: var(--radius); padding: 0.8rem 1.1rem; margin-bottom: 1rem; border: 1px solid; }
 .banner-error { background: var(--bad-soft); color: var(--bad); border-color: #f0bcb7; }
 
-/* ----------------------------------------------------------------- answer */
+/* =====================================================================
+   BLOQUE: Respuesta (afirmaciones, etiquetas de origen, tablas y detalles)
+   ===================================================================== */
 .answer-meta { color: var(--muted); font-size: 0.8rem; margin: 0 0 0.6rem; }
 .summary { font-size: 1.12rem; margin: 0; }
 .card-summary { border-left: 5px solid var(--accent); }
@@ -103,6 +123,7 @@ button { font: inherit; cursor: pointer; }
 .claims p { margin: 0 0 0.3rem; }
 .claim-meta { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
 
+/* Etiquetas de origen: cálculo (código), contraste, documento y modelo. */
 .badge { display: inline-block; border-radius: 6px; padding: 0.05rem 0.5rem; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em; }
 .badge-calculo { background: var(--ok-soft); color: var(--ok); }
 .badge-contraste { background: #ece6f7; color: #4b3380; }
@@ -112,6 +133,7 @@ button { font: inherit; cursor: pointer; }
 .badge-bad { background: var(--bad-soft); color: var(--bad); }
 .badge-ok { background: var(--ok-soft); color: var(--ok); }
 
+/* Borde de color según el tipo de tarjeta. */
 .card-hypothesis { border-left: 5px solid #d9a441; }
 .card-contradiction { border-left: 5px solid var(--bad); }
 .card-gap { border-left: 5px solid #8a96a6; }
@@ -122,6 +144,7 @@ th { background: #eef2f6; font-weight: 700; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 tr.total td { font-weight: 700; background: #f7f9fb; }
 .table-wrap { overflow-x: auto; }
+/* Tabla ancha: la última columna (texto largo) puede partir línea; las demás no. */
 .wide-last td { white-space: nowrap; }
 .wide-last td:last-child { white-space: normal; min-width: 18rem; }
 
@@ -134,10 +157,13 @@ dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 0.2r
 dt { color: var(--muted); }
 dd { margin: 0; }
 
+/* Resalta un instante la tarjeta a la que se llega al hacer clic en una fuente CALC-n. */
 .flash { animation: flash 1.6s ease-out; }
 @keyframes flash { from { background: #fff1b8; } to { background: transparent; } }
 
-/* ------------------------------------------------------------------ drawer */
+/* =====================================================================
+   BLOQUE: Panel lateral (fuente citada, calidad de datos, alertas)
+   ===================================================================== */
 .overlay { position: fixed; inset: 0; background: rgba(20, 30, 45, 0.35); z-index: 10; }
 .drawer {
   position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100%); z-index: 11;
@@ -151,6 +177,9 @@ dd { margin: 0; }
 .alert { border: 1px solid #f0bcb7; background: #fff9f8; border-radius: 8px; padding: 0.8rem 1rem; margin-bottom: 0.9rem; }
 .alert ul { margin: 0.3rem 0 0.5rem 1.1rem; padding: 0; font-size: 0.88rem; }
 
+/* =====================================================================
+   BLOQUE: Pantallas angostas (celular)
+   ===================================================================== */
 @media (max-width: 720px) {
   html { font-size: 16px; }
   .topbar { padding: 0.7rem 1rem; }

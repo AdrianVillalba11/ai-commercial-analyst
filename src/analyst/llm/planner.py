@@ -1,7 +1,11 @@
-"""Turns a question into a validated plan. The model only picks from a closed catalog.
+"""
+PLANIFICADOR DE LA PREGUNTA
 
-If the model cannot produce a valid plan (twice), a keyword-based default plan is used and the
-answer says so. A broken Ollama (not running, model missing) is NOT hidden: that error propagates.
+Qué hace: convierte la pregunta en un plan validado (qué cálculos hacer y si hacen falta documentos).
+Con qué se conecta: usa el cliente del modelo; el plan alimenta a prompts.py y a facts.py.
+Idea clave: el modelo solo ELIGE dentro de un catálogo cerrado. Si no logra un plan válido (dos intentos),
+se usa un plan por defecto basado en palabras clave y la respuesta lo avisa. Un Ollama roto (apagado,
+modelo ausente) NO se oculta: ese error sube hasta el usuario.
 """
 import re
 from dataclasses import dataclass, field
@@ -16,14 +20,19 @@ from analyst.llm.prompts import spec_key
 from analyst.llm.schemas import AnalysisSpec, Plan
 from analyst.text import fold
 
+# =====================================================================
+# BLOQUE: Constantes
+# =====================================================================
 T = TypeVar("T", bound=BaseModel)
 PLAN_MAX_TOKENS = 300
+# Tipos de plan que necesitan los documentos.
 DOCUMENT_TYPES = {"integrada", "contraste_reporte", "causalidad"}
-# Words that show a question is about the commercial analysis; a model that calls it "out of scope" is wrong.
+# Palabras que muestran que la pregunta trata del análisis comercial; si el modelo la llama "fuera de alcance", se equivoca.
 _DOMAIN = re.compile(r"brio|venta|region|\b(?:norte|sur|centro|oriente|occidente)\b|faltante|consumidor|promocion|"
                      r"reporte|canal|presentacion|caida|comerciante|visita|precio|disponibilidad|competencia|"
                      r"deterioro|entrevista|inventario|formato|\bt[12]\b")
 
+# Instrucciones del planificador (en español porque la pregunta y el dominio lo están).
 PLAN_SYSTEM = (
     "Planificas el análisis de una pregunta sobre la marca Brío (ventas netas; T1 = ene-mar y T2 = abr-jun de 2026). "
     "Responde solo JSON.\n"
@@ -37,7 +46,12 @@ PLAN_SYSTEM = (
 )
 
 
+# =====================================================================
+# BLOQUE: Planificación
+# =====================================================================
 class StructuredLLM(Protocol):
+    """Lo que se le exige a un modelo (permite usar uno falso en las pruebas)."""
+
     @property
     def name(self) -> str: ...
     def generate_structured(self, model_cls: type[T], system: str, user: str, max_tokens: int) -> Generated[T]: ...
@@ -45,13 +59,16 @@ class StructuredLLM(Protocol):
 
 @dataclass
 class PlanResult:
+    """Plan elegido, de dónde vino (modelo o plan por defecto), avisos y tiempo."""
+
     plan: Plan
-    source: str                       # "llm" or "fallback"
+    source: str                       # "llm" o "fallback" (plan por defecto)
     notes: list[str] = field(default_factory=list)
     seconds: float = 0.0
 
 
 def plan_question(llm: StructuredLLM, question: str) -> PlanResult:
+    """Pide el plan al modelo; si falla o se equivoca de alcance, usa el plan por defecto."""
     try:
         generated = llm.generate_structured(Plan, PLAN_SYSTEM, f"Pregunta: {question}", PLAN_MAX_TOKENS)
     except LLMOutputError as exc:
@@ -66,11 +83,12 @@ def plan_question(llm: StructuredLLM, question: str) -> PlanResult:
 
 
 def default_spec(dimension: str = "region", metric: str = "venta_neta_cop", region: str = "todas") -> AnalysisSpec:
+    """Cálculo por defecto: venta neta por región (o la dimensión indicada)."""
     return AnalysisSpec(agrupar_por=[dimension], metrica=metric, region=region, canal="todos", presentacion="todas")
 
 
 def normalize_plan(plan: Plan) -> Plan:
-    """Drop repeated analyses and enforce the rules the code relies on, whatever the model said."""
+    """Quita cálculos repetidos y fuerza las reglas de las que depende el código, diga lo que diga el modelo."""
     if plan.tipo == "fuera_de_alcance":
         return Plan(tipo=plan.tipo, analisis=[], usar_documentos=False)
     unique, seen = [], set()
@@ -78,13 +96,13 @@ def normalize_plan(plan: Plan) -> Plan:
         if spec_key(spec) not in seen:
             seen.add(spec_key(spec))
             unique.append(spec)
-    # Pure number questions do not use the documents: the commercial report quotes figures that
-    # disagree with the data, and mixing it in only invites wrong attributions.
+    # Las preguntas puramente numéricas no usan documentos: el reporte comercial cita cifras que
+    # no coinciden con los datos, y mezclarlo solo invita a atribuciones erróneas.
     use_documents = plan.tipo in DOCUMENT_TYPES or (plan.usar_documentos and plan.tipo != "cuantitativa")
-    # The report speaks in regional totals, so the comparison must be by region whatever the model chose.
+    # El reporte habla de totales por región, así que la comparación debe ser por región sin importar lo que eligió el modelo.
     if plan.tipo == "contraste_reporte":
         analyses = [default_spec()]
-    elif plan.tipo == "causalidad":      # a region x channel table is noise for "did X cause the drop?"
+    elif plan.tipo == "causalidad":      # una tabla región x canal es ruido para "¿X causó la caída?"
         analyses = [s for s in unique if s.region != "todas"] or [default_spec()]
     else:
         analyses = unique or [default_spec()]
@@ -92,7 +110,7 @@ def normalize_plan(plan: Plan) -> Plan:
 
 
 def fallback_plan(question: str) -> Plan:
-    """Keyword-based plan: compare by region (or channel / presentation if named) and use documents."""
+    """Plan por palabras clave: compara por región (o canal / presentación si se nombran) y usa documentos."""
     q = fold(question)
     dimension = "region"
     if "canal" in q:

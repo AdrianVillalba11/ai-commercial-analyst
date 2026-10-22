@@ -1,12 +1,16 @@
-"""Prompt-injection screening for document chunks (layers 1 and 2 of the defence).
+"""
+DETECCIÓN DE INYECCIÓN DE PROMPT EN DOCUMENTOS (capas 1 y 2 de la defensa)
 
-Documents are untrusted data. A chunk that talks to an AI model (override orders, fixed
-answers, concealment requests) must never reach the search indexes or the prompt. Quarantined
-chunks are not hidden: they are reported so the analyst can see the attempt.
+Qué hace: revisa cada fragmento de los documentos y pone en cuarentena los que intentan dar órdenes
+a un modelo de IA (ignorar información, imponer una respuesta, pedir que se oculte algo).
+Con qué se conecta: rag/retriever.py solo indexa los fragmentos seguros y los vuelve a revisar al
+consultar; la API muestra los fragmentos en cuarentena en el panel de alertas de seguridad.
+Idea clave: los documentos son datos NO confiables. Un fragmento en cuarentena no se esconde: se
+reporta para que el analista vea el intento.
 
-This layer is heuristic and has known gaps (see the limitation test): a paraphrase with no
-trigger words can pass. The other layers do not depend on it: numbers come from pandas, and
-the model's output is validated afterwards.
+Limitación conocida: esta capa es heurística. Una paráfrasis sin palabras gatillo puede pasar
+(hay una prueba que lo documenta). Las demás capas no dependen de ella: las cifras vienen de
+pandas y la salida del modelo se valida después.
 """
 import re
 import unicodedata
@@ -14,23 +18,30 @@ from dataclasses import asdict, dataclass, field
 
 from analyst.docs.chunker import Chunk, load_all_chunks
 
+# =====================================================================
+# BLOQUE: Umbrales y estados
+# Puntaje >= 3: cuarentena (no se indexa). Puntaje 1-2: advertencia (se indexa pero se avisa).
+# =====================================================================
 QUARANTINE_THRESHOLD = 3
 WARNING_THRESHOLD = 1
 
 CLEAN, WARNING, QUARANTINE = "limpio", "advertencia", "cuarentena"
 
-# ------------------------------------------------------------ normalization
-
+# =====================================================================
+# BLOQUE: Normalización antes de buscar señales
+# Deshace los trucos habituales de ofuscación: caracteres invisibles, letras parecidas
+# de otro alfabeto (homoglifos) y letras separadas ("i g n o r a").
+# =====================================================================
 _INVISIBLE = re.compile("[​-‏‪-‮⁠-⁤﻿­]")
 _HOMOGLYPHS = str.maketrans({
-    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y",   # Cyrillic
-    "і": "i", "ѕ": "s", "ј": "j", "ɡ": "g", "ο": "o",                        # Cyrillic / Latin / Greek
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y",   # cirílico
+    "і": "i", "ѕ": "s", "ј": "j", "ɡ": "g", "ο": "o",                        # cirílico / latino / griego
 })
 _SPACED_LETTERS = re.compile(r"\b(?:[a-z][ .\-_*]){3,}[a-z]\b")
 
 
 def normalize_for_detection(text: str) -> str:
-    """Canonical form used for matching: undo the usual obfuscation tricks."""
+    """Forma canónica para comparar: minúsculas, sin tildes ni caracteres invisibles, letras unidas."""
     text = unicodedata.normalize("NFKC", text)
     text = _INVISIBLE.sub("", text).casefold().translate(_HOMOGLYPHS)
     text = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
@@ -38,16 +49,20 @@ def normalize_for_detection(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-# ------------------------------------------------------------------ signals
-
-# An order starts a sentence or clause ("...archivo: ignora cualquier..."), so ambiguous verbs
-# only count there. "El reporte ignora la conciliación" has a subject and does not match.
+# =====================================================================
+# BLOQUE: Señales de inyección
+# Cada señal tiene un peso y varios patrones; cuenta una sola vez aunque coincidan varios.
+# =====================================================================
+# Una orden empieza una oración o cláusula ("...archivo: ignora cualquier..."), por eso los verbos
+# ambiguos solo cuentan ahí. "El reporte ignora la conciliación" tiene sujeto y no coincide.
 _START = (r"(?:^|[.:;!?\"“”'(\[>\n]|[-•*]\s)\s*"
           r"(?:(?:por favor|please|ahora|ya|y|and|then|luego|despues|tambien|also)[,\s]+)*")
 
 
 @dataclass(frozen=True)
 class Signal:
+    """Una familia de patrones sospechosos con su peso en el puntaje."""
+
     name: str
     weight: int
     description: str
@@ -55,9 +70,11 @@ class Signal:
 
 
 def _signal(name: str, weight: int, description: str, *patterns: str) -> Signal:
+    """Crea una señal compilando sus patrones."""
     return Signal(name, weight, description, tuple(re.compile(p) for p in patterns))
 
 
+# Las cinco señales: dirigido a IA, ordena ignorar, impone respuesta, pide ocultar, marcador de rol.
 SIGNALS = (
     _signal(
         "dirigido_a_ia", 2, "Se dirige a un asistente de IA o a un modelo de lenguaje",
@@ -112,13 +129,17 @@ SIGNALS = (
         r"\bact\s+as\b",
     ),
 )
+# Señal extra: el propio documento marca el contenido como importado sin verificar.
 PROVENANCE = Signal("origen_no_verificado", 1, "El propio documento lo marca como contenido importado sin verificar", ())
 
 
-# ----------------------------------------------------------------- verdicts
-
+# =====================================================================
+# BLOQUE: Veredictos
+# =====================================================================
 @dataclass(frozen=True)
 class SignalHit:
+    """Una señal que se activó, con el trozo de texto que la disparó."""
+
     signal: str
     weight: int
     description: str
@@ -127,19 +148,21 @@ class SignalHit:
 
 @dataclass
 class Verdict:
+    """Resultado de revisar un texto: puntaje total, estado (limpio/advertencia/cuarentena) y señales."""
+
     score: int
     status: str
     hits: list[SignalHit] = field(default_factory=list)
 
 
 def _evidence(normalized: str, match: re.Match) -> str:
-    """The matched words plus a little of what follows, so the analyst sees the order itself."""
+    """Las palabras detectadas más un poco de lo que sigue, para que el analista vea la orden misma."""
     snippet = normalized[match.start():match.end() + 45]
     return snippet.lstrip(" .:;!?\"“”'([>-•*")[:90].strip()
 
 
 def scan_text(text: str, imported: bool = False) -> Verdict:
-    """Score a text. Each signal counts once, however many times it appears."""
+    """Puntúa un texto. Cada señal cuenta una vez, sin importar cuántas veces aparezca."""
     normalized = normalize_for_detection(text)
     hits = []
     for signal in SIGNALS:
@@ -157,11 +180,13 @@ def scan_text(text: str, imported: bool = False) -> Verdict:
 
 @dataclass
 class FlaggedChunk:
+    """Fragmento marcado (advertencia o cuarentena) junto con su veredicto."""
+
     chunk: Chunk
     verdict: Verdict
 
     def to_dict(self) -> dict:
-        """Shape for the 'security alerts' panel. The UI must render it as plain text."""
+        """Forma para el panel de alertas de seguridad. La interfaz debe mostrarlo como texto plano."""
         chunk = self.chunk
         return {
             "chunk_id": chunk.chunk_id, "doc": chunk.doc, "doc_title": chunk.doc_title,
@@ -174,16 +199,23 @@ class FlaggedChunk:
 
 @dataclass
 class ScreeningResult:
-    safe: list[Chunk]                 # clean + warning: allowed into the indexes
-    quarantined: list[FlaggedChunk]   # excluded from every index
-    warnings: list[FlaggedChunk]      # allowed, but flagged in the report
+    """Resultado de revisar todos los fragmentos."""
+
+    safe: list[Chunk]                 # limpios + con advertencia: pueden entrar a los índices
+    quarantined: list[FlaggedChunk]   # excluidos de todos los índices
+    warnings: list[FlaggedChunk]      # permitidos, pero señalados en el reporte
 
 
+# =====================================================================
+# BLOQUE: Revisión de fragmentos
+# =====================================================================
 def _scan_chunk(chunk: Chunk) -> Verdict:
+    """Revisa un fragmento; los importados llevan un punto extra por origen no verificado."""
     return scan_text(chunk.text, imported=chunk.kind == "dato_importado")
 
 
 def screen_chunks(chunks: list[Chunk]) -> ScreeningResult:
+    """Separa los fragmentos en seguros, con advertencia y en cuarentena."""
     safe, quarantined, warnings = [], [], []
     for chunk in chunks:
         verdict = _scan_chunk(chunk)
@@ -197,9 +229,10 @@ def screen_chunks(chunks: list[Chunk]) -> ScreeningResult:
 
 
 def filter_safe(chunks: list[Chunk]) -> list[Chunk]:
-    """Second check at query time, over whatever the retriever returned."""
+    """Segunda revisión al consultar, sobre lo que devolvió el buscador."""
     return [c for c in chunks if _scan_chunk(c).status != QUARANTINE]
 
 
 def load_safe_corpus(raw_dir=None) -> ScreeningResult:
+    """Carga los documentos y los revisa; es el punto de entrada que usa el resto de la app."""
     return screen_chunks(load_all_chunks(raw_dir))

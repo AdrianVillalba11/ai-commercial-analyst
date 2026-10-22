@@ -1,34 +1,49 @@
-"""Facts about the numbers, written by code from the pandas results (never by the model).
+"""
+HECHOS NUMÉRICOS ESCRITOS POR CÓDIGO
 
-Each fact is a complete sentence with its subject, so it can be read on its own.
+Qué hace: redacta, a partir de los resultados de pandas, las frases con cifras que van en "Hechos".
+Con qué se conecta: toma los bloques CALC-n de llm/prompts.py; el validador los pone primero en la respuesta.
+Idea clave: las cifras nunca las escribe el modelo. Cada hecho es una frase completa con su sujeto,
+para poder leerse sola.
 """
 from analyst.analytics.metrics import format_number, format_pct
 from analyst.guardrails.models import ORIGIN_CALC, FinalClaim
 from analyst.llm.prompts import CalcBlock, similar_drops
 
+# =====================================================================
+# BLOQUE: Etiquetas y formato
+# =====================================================================
 _DIMENSIONS = {"region": "región", "canal": "canal", "presentacion": "presentación"}
 _METRICS = {"venta_neta_cop": "ventas netas (COP)", "unidades": "unidades"}
 
 
 def _label(keys: dict) -> str:
+    """Nombre del grupo (ej. 'Sur / Moderno'), o 'Total' si no hay grupos."""
     return " / ".join(str(v) for v in keys.values()) or "Total"
 
 
 def _signed(pct: float) -> str:
+    """Porcentaje con signo + explícito cuando es positivo."""
     return ("+" if pct > 0 else "") + format_pct(pct)
 
 
 def _filters(result: dict) -> str:
+    """Filtros aplicados, en texto."""
     return ", ".join(f"{k} = {','.join(v)}" for k, v in result["filters"].items())
 
 
 def _scope(result: dict) -> str:
+    """Alcance del cálculo en texto: 'por región (canal = Moderno)'."""
     groups = " y ".join(_DIMENSIONS[g] for g in result["group_by"])
     filters = ", ".join(f"{k} = {','.join(v)}" for k, v in result["filters"].items())
     return " ".join(part for part in (f"por {groups}" if groups else "", f"({filters})" if filters else "") if part)
 
 
+# =====================================================================
+# BLOQUE: Generación de hechos
+# =====================================================================
 def calc_facts(blocks: list[CalcBlock]) -> list[FinalClaim]:
+    """Por cada cálculo: mayor caída (o caída similar), grupos que crecieron y total, todo con su fuente CALC-n."""
     facts: list[FinalClaim] = []
     totals: dict[str, FinalClaim] = {}
     for block in blocks:
@@ -40,6 +55,7 @@ def calc_facts(blocks: list[CalcBlock]) -> list[FinalClaim]:
         scope = _scope(result)
         rows_with_pct = [r for r in rows if r["pct_change"] is not None]
         drop = min(rows_with_pct, key=lambda r: r["pct_change"], default=None)
+        # Si todos cayeron casi igual, no se destaca ninguno como "el mayor".
         similar = similar_drops(rows)
         if similar:
             facts.append(FinalClaim(
@@ -62,7 +78,7 @@ def calc_facts(blocks: list[CalcBlock]) -> list[FinalClaim]:
             text = (f"{label} ({metric}): {format_pct(total['pct_change'])} "
                     f"(T1 {format_number(total['t1'])} → T2 {format_number(total['t2'])}).")
             if text in totals:
-                totals[text].fuentes.append(block.calc_id)          # same figure, one more calculation that shows it
+                totals[text].fuentes.append(block.calc_id)          # misma cifra, otro cálculo que la muestra
             else:
                 totals[text] = FinalClaim(text, [block.calc_id], ORIGIN_CALC)
                 facts.append(totals[text])

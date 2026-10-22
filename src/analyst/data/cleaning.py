@@ -1,10 +1,14 @@
-"""Cleaning rules for the sales table.
+"""
+LIMPIEZA DE LA TABLA DE VENTAS
 
-Principles:
-- Rules are generic (no hard-coded record ids), so they work on any similar file.
-- Only unambiguous problems are corrected (e.g. stray spaces, letter case).
-- If a value cannot be interpreted with certainty, the row is excluded, never guessed.
-- Every correction or exclusion is recorded in the quality report.
+Qué hace: aplica una serie de reglas al CSV crudo y devuelve una tabla confiable más el
+reporte de cada corrección o exclusión.
+Con qué se conecta: la llama data/loader.py; el reporte lo llena y lo consume quality_report.py.
+Principios:
+- Las reglas son genéricas (sin ids de registro escritos a mano): sirven para un archivo parecido.
+- Solo se corrige lo que tiene UNA lectura posible (espacios sobrantes, mayúsculas/minúsculas).
+- Si un valor no se puede interpretar con certeza, la fila se EXCLUYE; nunca se adivina.
+- Toda corrección o exclusión queda registrada en el reporte de calidad.
 """
 import re
 from dataclasses import dataclass
@@ -13,37 +17,52 @@ import pandas as pd
 
 from analyst.data.quality_report import CORRECTED, EXCLUDED, Issue, QualityReport
 
+# =====================================================================
+# BLOQUE: Catálogos oficiales y constantes
+# Valores válidos de cada dimensión; sirven para normalizar y para validar.
+# =====================================================================
 BRANDS = ["Brio", "Luma", "Nativa", "Rizo", "Senda"]
 REGIONS = ["Norte", "Centro", "Sur", "Oriente", "Occidente"]
 CHANNELS = ["Tradicional", "Moderno"]
 PRESENTATIONS = ["Individual", "Familiar"]
 VALID_MONTHS = [f"2026-{m:02d}" for m in range(1, 7)]
 
+# Prefijo y letra que debe tener el id de punto de venta según región y canal (ej. OC-T-001).
 REGION_PREFIX = {"Norte": "NO", "Centro": "CE", "Sur": "SU", "Oriente": "OR", "Occidente": "OC"}
 CHANNEL_LETTER = {"Tradicional": "T", "Moderno": "M"}
 _PDV_PATTERN = re.compile(r"^([A-Z]{2})-([TM])-\d+$")
 
+# Columnas categóricas y su lista de valores permitidos (regla 1).
 _CATEGORICAL = {
     "marca": BRANDS,
     "region": REGIONS,
     "canal": CHANNELS,
     "presentacion": PRESENTATIONS,
 }
+# Columnas de texto a las que se les recortan espacios (regla 1a).
 _TEXT_COLUMNS = ["registro_id", "mes", "punto_venta_id"]
+# Columnas que definen que dos filas son "idénticas" (regla 2).
 _DEDUP_COLUMNS = [
     "registro_id", "mes", "marca", "region", "canal",
     "punto_venta_id", "presentacion", "unidades", "venta_neta_cop",
 ]
 
 
+# =====================================================================
+# BLOQUE: Punto de entrada de la limpieza
+# Aplica las reglas en orden. Cada regla marca filas a excluir en `excluded` y deja
+# constancia en el reporte; al final se eliminan las filas excluidas de una sola vez.
+# =====================================================================
 @dataclass
 class CleanResult:
+    """Resultado de la limpieza: tabla limpia + reporte de calidad."""
+
     data: pd.DataFrame
     report: QualityReport
 
 
 def clean_sales(raw: pd.DataFrame) -> CleanResult:
-    """Apply all cleaning rules to a raw sales table (all columns as text)."""
+    """Aplica todas las reglas a la tabla cruda (todas las columnas como texto)."""
     df = raw.copy()
     report = QualityReport(rows_in=len(df))
     excluded: set = set()
@@ -57,6 +76,7 @@ def clean_sales(raw: pd.DataFrame) -> CleanResult:
     _rule_negative_values(df, report, excluded)
     _rule_point_of_sale_consistency(df, report, excluded)
 
+    # Se eliminan las filas excluidas y se convierten las columnas numéricas ya validadas.
     clean = df.drop(index=list(excluded)).reset_index(drop=True)
     clean["unidades"] = _to_numeric_column(clean["unidades"])
     clean["venta_neta_cop"] = _to_numeric_column(clean["venta_neta_cop"])
@@ -64,13 +84,18 @@ def clean_sales(raw: pd.DataFrame) -> CleanResult:
     return CleanResult(data=clean, report=report)
 
 
+# =====================================================================
+# BLOQUE: Ayudantes para registrar hallazgos
+# =====================================================================
 def _brand_of(df: pd.DataFrame, idx) -> str:
+    """Marca de la fila con su ortografía oficial, para atribuir el hallazgo a la marca correcta."""
     value = str(df.at[idx, "marca"]).strip()
     lookup = {b.casefold(): b for b in BRANDS}
     return lookup.get(value.casefold(), value)
 
 
 def _issue(df, idx, rule, field, original, action, detail) -> Issue:
+    """Arma el registro de un hallazgo (qué fila, qué regla, qué valor, qué se hizo)."""
     return Issue(
         registro_id=str(df.at[idx, "registro_id"]),
         rule=rule,
@@ -82,8 +107,11 @@ def _issue(df, idx, rule, field, original, action, detail) -> Issue:
     )
 
 
+# =====================================================================
+# BLOQUE: Reglas de limpieza (una función por regla)
+# =====================================================================
 def _rule_normalize_text(df, report):
-    """Rule 1a: strip surrounding whitespace in identifier-like columns."""
+    """Regla 1a: quita espacios al inicio y al final en las columnas tipo identificador."""
     for col in _TEXT_COLUMNS:
         stripped = df[col].str.strip()
         for idx in df.index[stripped != df[col]]:
@@ -93,7 +121,7 @@ def _rule_normalize_text(df, report):
 
 
 def _rule_normalize_categories(df, report, excluded):
-    """Rule 1: map categorical values to the official spelling (case/space insensitive)."""
+    """Regla 1: lleva los valores categóricos a su ortografía oficial (ignora mayúsculas y espacios)."""
     for col, allowed in _CATEGORICAL.items():
         lookup = {v.casefold(): v for v in allowed}
         canonical = df[col].str.strip().str.casefold().map(lookup)
@@ -110,7 +138,7 @@ def _rule_normalize_categories(df, report, excluded):
 
 
 def _rule_exact_duplicates(df, report, excluded):
-    """Rule 2: exact duplicate rows -> keep the first, exclude the repeats."""
+    """Regla 2: filas exactamente duplicadas -> se conserva la primera y se excluyen las repetidas."""
     for idx in df.index[df.duplicated(subset=_DEDUP_COLUMNS, keep="first")]:
         excluded.add(idx)
         report.add(_issue(df, idx, "duplicado_exacto", "registro_id", df.at[idx, "registro_id"],
@@ -118,7 +146,7 @@ def _rule_exact_duplicates(df, report, excluded):
 
 
 def _rule_conflicting_ids(df, report, excluded):
-    """Rule 2b: same registro_id with different content -> exclude all (cannot know which is right)."""
+    """Regla 2b: mismo registro_id con contenido distinto -> se excluyen todas (no se sabe cuál es la correcta)."""
     unique = df.drop(index=df.index[df.duplicated(subset=_DEDUP_COLUMNS, keep="first")])
     for idx in unique.index[unique.duplicated(subset=["registro_id"], keep=False)]:
         excluded.add(idx)
@@ -127,7 +155,7 @@ def _rule_conflicting_ids(df, report, excluded):
 
 
 def _rule_valid_month(df, report, excluded):
-    """Rule 3: month must be one of 2026-01 .. 2026-06."""
+    """Regla 3: el mes debe ser uno de 2026-01 a 2026-06."""
     for idx in df.index[~df["mes"].isin(VALID_MONTHS)]:
         excluded.add(idx)
         report.add(_issue(df, idx, "mes_invalido", "mes", df.at[idx, "mes"], EXCLUDED,
@@ -135,7 +163,7 @@ def _rule_valid_month(df, report, excluded):
 
 
 def _rule_numeric_values(df, report, excluded):
-    """Rule 4: unidades and venta_neta_cop must be present and numeric."""
+    """Regla 4: unidades y venta_neta_cop deben existir y ser numéricos."""
     for col in ["unidades", "venta_neta_cop"]:
         numeric = pd.to_numeric(df[col].str.strip(), errors="coerce")
         for idx in df.index[numeric.isna() | numeric.isin([float("inf"), float("-inf")])]:
@@ -145,7 +173,7 @@ def _rule_numeric_values(df, report, excluded):
 
 
 def _rule_negative_values(df, report, excluded):
-    """Rule 5: negative units or sales are excluded (no policy to interpret returns)."""
+    """Regla 5: unidades o ventas negativas se excluyen (no hay política para interpretar devoluciones)."""
     for col in ["unidades", "venta_neta_cop"]:
         numeric = pd.to_numeric(df[col].str.strip(), errors="coerce")
         for idx in df.index[numeric < 0]:
@@ -155,11 +183,11 @@ def _rule_negative_values(df, report, excluded):
 
 
 def _rule_point_of_sale_consistency(df, report, excluded):
-    """Rule 6: punto_venta_id prefix must agree with region and channel (e.g. OC-T-001)."""
+    """Regla 6: el prefijo del punto de venta debe coincidir con la región y el canal (ej. OC-T-001)."""
     for idx in df.index:
         region, canal = df.at[idx, "region"], df.at[idx, "canal"]
         if region not in REGION_PREFIX or canal not in CHANNEL_LETTER:
-            continue  # already excluded by rule 1b
+            continue  # ya excluida por la regla 1
         pdv = df.at[idx, "punto_venta_id"]
         match = _PDV_PATTERN.match(pdv)
         if not match:
@@ -175,7 +203,11 @@ def _rule_point_of_sale_consistency(df, report, excluded):
                           f"punto_venta_id {problem}; la dimensión es dudosa."))
 
 
+# =====================================================================
+# BLOQUE: Conversión final a número
+# =====================================================================
 def _to_numeric_column(series: pd.Series) -> pd.Series:
+    """Convierte la columna validada a número: entero si todos los valores lo son, decimal si no."""
     numeric = pd.to_numeric(series.str.strip())
     if (numeric % 1 == 0).all():
         return numeric.astype("int64")

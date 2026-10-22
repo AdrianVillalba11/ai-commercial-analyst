@@ -1,4 +1,9 @@
-"""Tests for the planner, the prompt builder, the service and the CLI, with a fake LLM (no Ollama)."""
+"""
+PRUEBAS DEL PLANIFICADOR, EL PROMPT, EL SERVICIO Y LA LÍNEA DE COMANDOS
+
+Qué verifica: llm/planner.py, llm/prompts.py, service.py y cli.py.
+Cómo: con un modelo falso (tests/helpers.py), sin Ollama; los datos y documentos son los reales.
+"""
 import io
 import json
 
@@ -21,16 +26,20 @@ from tests.helpers import SIMPLE_ANSWER, FakeEmbedder, FakeLLM, make_chunk
 
 
 def spec(**kw) -> AnalysisSpec:
+    """Cálculo de ejemplo con valores por defecto; se pueden cambiar por parámetro."""
     base = {"agrupar_por": ["region"], "metrica": "venta_neta_cop", "region": "todas", "canal": "todos",
             "presentacion": "todas"}
     return AnalysisSpec(**{**base, **kw})
 
 
 def plan(tipo="cuantitativa", analisis=None, docs=False) -> Plan:
+    """Plan de ejemplo."""
     return Plan(tipo=tipo, analisis=[spec()] if analisis is None else analisis, usar_documentos=docs)
 
 
-# ---------------------------------------------------------------- planner
+# =====================================================================
+# BLOQUE: Planificador
+# =====================================================================
 
 def test_normalize_removes_repeated_analyses():
     assert len(normalize_plan(plan(analisis=[spec(), spec()])).analisis) == 1
@@ -121,15 +130,19 @@ def test_fallback_plan_type(question, tipo):
     assert fallback_plan(question).tipo == tipo
 
 
-# ------------------------------------------------------------ calc blocks
+# =====================================================================
+# BLOQUE: Bloques de cálculo
+# =====================================================================
 
 @pytest.fixture(scope="module")
 def cleaned():
+    """Datos reales limpios, cargados una sola vez."""
     return load_clean_sales()
 
 
 @pytest.fixture(scope="module")
 def analyzer(cleaned):
+    """Analizador de ventas sobre los datos reales."""
     return SalesAnalyzer(cleaned.data, cleaned.report)
 
 
@@ -162,9 +175,12 @@ def test_quality_line_names_the_excluded_rows(analyzer):
     assert quality_line([]) == ""
 
 
-# ---------------------------------------------------------------- evidence
+# =====================================================================
+# BLOQUE: Evidencia
+# =====================================================================
 
 def retrieved(chunk_id, text, regions=None):
+    """Fragmento recuperado de ejemplo."""
     return RetrievedChunk(make_chunk(chunk_id, text, regions), 0.1, {"lexical": 1})
 
 
@@ -187,7 +203,9 @@ def test_fit_evidence_keeps_the_best_ranked_that_fit():
     assert fit_evidence(items, budget_tokens=0) == ([], 6)
 
 
-# ------------------------------------------------------------------ prompts
+# =====================================================================
+# BLOQUE: Prompts
+# =====================================================================
 
 def test_prompt_isolates_evidence_between_delimiters_with_a_random_token(analyzer):
     blocks = build_calc_blocks(analyzer, plan())
@@ -225,14 +243,18 @@ def test_the_prompt_carries_the_anti_causality_rules_and_the_closed_source_list(
     assert "nunca afirmes que algo causó" in system and "No inventes IDs" in system and "contradicciones" in system
 
 
-# ------------------------------------------------------------------ service
+# =====================================================================
+# BLOQUE: Servicio
+# =====================================================================
 
 @pytest.fixture(scope="module")
 def corpus():
+    """Corpus real de documentos ya revisado."""
     return load_safe_corpus()
 
 
 @pytest.fixture
+# Fábrica de servicios con un modelo falso configurable.
 def make_service(cleaned, analyzer, corpus, tmp_path):
     def build(llm, embedder=None):
         retriever = HybridRetriever(corpus.safe, embedder or FakeEmbedder(), tmp_path)
@@ -335,9 +357,12 @@ def test_service_exposes_data_quality_and_security_alerts(make_service):
     assert [a["chunk_id"] for a in service.security_alerts()] == ["OC-EXT-06"]
 
 
-# ---------------------------------------------------------------------- CLI
+# =====================================================================
+# BLOQUE: Línea de comandos
+# =====================================================================
 
 @pytest.fixture
+# Fábrica que usa la línea de comandos para obtener el servicio.
 def factory(make_service):
     return lambda: make_service(FakeLLM(plan=plan("integrada", docs=True)))
 

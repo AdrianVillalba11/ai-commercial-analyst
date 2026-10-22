@@ -1,7 +1,10 @@
-"""Tests for the commercial metrics engine.
+"""
+PRUEBAS DEL MOTOR DE MÉTRICAS (T1 vs T2)
 
-Synthetic tables are checked against hand-computed values. The real-data test is checked
-against an independent pure-Python implementation (csv module, no pandas).
+Qué verifica: los cálculos de analytics/metrics.py: totales, agrupaciones, aporte al cambio, filtros, mayor caída,
+validación de entradas y serie mensual.
+Cómo: las tablas sintéticas se comparan con valores calculados a mano; con los datos reales se compara contra una
+implementación independiente en Python puro (módulo csv, sin pandas), para que un error de pandas no pase inadvertido.
 """
 import csv
 from collections import defaultdict
@@ -43,7 +46,7 @@ def test_total_variation_by_hand(simple):
 
 def test_grouped_by_region_values_and_order(simple):
     r = simple.compare_periods("Brio", group_by="region")
-    assert [row.keys["region"] for row in r.rows] == ["Norte", "Sur"]  # worst first
+    assert [row.keys["region"] for row in r.rows] == ["Norte", "Sur"]  # primero la peor
     norte, sur = r.rows
     assert (norte.t1, norte.t2, norte.abs_change, norte.pct_change) == (100, 50, -50, -50.0)
     assert (sur.t1, sur.t2, sur.abs_change, sur.pct_change) == (200, 300, 100, 50.0)
@@ -53,7 +56,7 @@ def test_grouped_by_region_values_and_order(simple):
 def test_share_of_total_change(simple):
     r = simple.compare_periods("Brio", group_by="region")
     norte, sur = r.rows
-    # total change = +50; Norte -50 -> -100 %, Sur +100 -> +200 %
+    # cambio total = +50; Norte -50 -> -100 %, Sur +100 -> +200 %
     assert norte.share_of_total_change_pct == pytest.approx(-100.0)
     assert sur.share_of_total_change_pct == pytest.approx(200.0)
     assert sum(row.share_of_total_change_pct for row in r.rows) == pytest.approx(100.0)
@@ -138,7 +141,9 @@ def test_monthly_series_covers_all_months(simple):
     assert {p["mes"]: p["n"] for p in s.points}["2026-03"] == 0
 
 
-# ---- real data, verified against an independent implementation ----
+# =====================================================================
+# BLOQUE: Datos reales, verificados contra una implementación independiente
+# =====================================================================
 
 @pytest.fixture(scope="module")
 def real():
@@ -147,7 +152,7 @@ def real():
 
 
 def independent_brio_region_totals() -> dict:
-    """Pure-Python recomputation: csv module + dict, own minimal cleaning rules."""
+    """Recálculo en Python puro: módulo csv + diccionarios, con sus propias reglas mínimas de limpieza."""
     path = settings.raw_data_dir / SALES_FILENAME
     seen, totals = set(), defaultdict(lambda: {"T1": 0, "T2": 0})
     months = {f"2026-0{m}" for m in range(1, 7)}

@@ -1,4 +1,9 @@
-"""Tests for the structured-output chat client and the response schemas. No Ollama needed."""
+"""
+PRUEBAS DEL CLIENTE DEL MODELO Y DE LOS ESQUEMAS
+
+Qué verifica: llm/ollama_client.py (petición, reintentos, errores claros) y llm/schemas.py (esquemas cerrados y acotados).
+Cómo: no necesita Ollama; un transporte HTTP simulado (MockTransport) entrega las respuestas en orden y registra las peticiones.
+"""
 import json
 
 import httpx
@@ -19,7 +24,7 @@ def reply(content, done_reason="stop", status=200):
 
 
 def client_with(*responses):
-    """An OllamaChat whose HTTP layer plays the given responses in order and records the requests."""
+    """Un OllamaChat cuya capa HTTP entrega las respuestas dadas en orden y registra las peticiones."""
     sent, queue = [], list(responses)
 
     def handler(request):
@@ -34,7 +39,9 @@ def client_with(*responses):
     return chat, sent
 
 
-# ------------------------------------------------------------------ schemas
+# =====================================================================
+# BLOQUE: Esquemas
+# =====================================================================
 
 def test_schema_has_no_refs_and_everything_is_bounded():
     schema = json_schema(Plan)
@@ -66,7 +73,9 @@ def test_schema_models_reject_unknown_values_and_extra_fields():
                                "hipotesis": [], "contradicciones": [], "insuficiente": []})
 
 
-# ------------------------------------------------------------------ requests
+# =====================================================================
+# BLOQUE: Peticiones
+# =====================================================================
 
 def test_request_carries_schema_and_deterministic_options():
     chat, sent = client_with(reply(VALID_PLAN))
@@ -80,7 +89,9 @@ def test_request_carries_schema_and_deterministic_options():
     assert (generated.info.prompt_tokens, generated.info.output_tokens) == (100, 50)
 
 
-# ------------------------------------------------------------------- retries
+# =====================================================================
+# BLOQUE: Reintentos
+# =====================================================================
 
 def test_invalid_json_is_retried_once_with_a_reminder():
     chat, sent = client_with(reply("{no es json"), reply(VALID_PLAN))
@@ -89,7 +100,7 @@ def test_invalid_json_is_retried_once_with_a_reminder():
     assert "no cumplió el formato" in sent[1]["messages"][1]["content"]
     assert sent[1]["messages"][1]["content"].startswith("pregunta")
     assert generated.info.notes and "Intento 1 descartado" in generated.info.notes[0]
-    assert generated.info.prompt_tokens == 200      # both attempts are counted
+    assert generated.info.prompt_tokens == 200      # se cuentan los dos intentos
 
 
 def test_valid_json_with_a_value_outside_the_schema_is_retried():
@@ -118,7 +129,9 @@ def test_two_cut_answers_raise_a_clear_error():
         chat.generate_structured(Plan, "s", "u", 300)
 
 
-# ------------------------------------------------------------ infrastructure
+# =====================================================================
+# BLOQUE: Infraestructura y errores
+# =====================================================================
 
 @pytest.mark.parametrize("failure,expected", [
     (httpx.ConnectError("refused"), "ollama serve"),

@@ -1,4 +1,9 @@
-"""Checks that the written documentation matches the project, and that the repository is clean of traces."""
+"""
+PRUEBAS DE LA DOCUMENTACIÓN Y LIMPIEZA DEL REPOSITORIO
+
+Qué verifica: que el README y los documentos coinciden con el proyecto (variables de .env.example, comandos, enlaces
+a archivos que existen) y que el repositorio no contiene rastros de asistentes de programación ni credenciales.
+"""
 import re
 
 import pytest
@@ -12,6 +17,7 @@ TEXT_SUFFIXES = {".py", ".md", ".txt", ".html", ".css", ".js", ".ini", ".example
 
 
 def env_example() -> dict[str, str]:
+    """Variables de .env.example como diccionario nombre -> valor por defecto."""
     pairs = {}
     for line in (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8").splitlines():
         match = re.match(r"^([A-Z_]+)=(.*)$", line)
@@ -39,7 +45,7 @@ def test_the_readme_has_the_commands_an_evaluator_needs():
                     "python ask.py", 'python -m pytest -q -m "not ollama"', "python -m pytest -q",
                     "python scripts/generate_evidence.py"):
         assert command in readme, command
-    assert "Ejecución desde mi computador" in readme          # the demonstration modality the test asks to state
+    assert "Ejecución desde mi computador" in readme          # la modalidad de demostración que la prueba pide declarar
 
 
 @pytest.mark.parametrize("doc", DOC_FILES, ids=lambda p: p.name)

@@ -1,8 +1,12 @@
-"""Chat client for Ollama that returns validated, structured output.
+"""
+CLIENTE DE GENERACIÓN CON OLLAMA
 
-Ollama enforces the JSON schema while generating, so the output has the right shape. Two things
-can still go wrong: the model hits the token limit mid-answer, or it fills the shape with
-values that fail validation. Each case gets exactly one retry.
+Qué hace: envía un prompt al modelo y devuelve una salida estructurada y validada.
+Con qué se conecta: lo usan el planificador y el redactor (a través de la interfaz StructuredLLM);
+la comunicación HTTP pasa por ollama_http.py.
+Idea clave: Ollama obliga a cumplir el esquema JSON al generar, así que la forma es correcta. Aun así
+pueden pasar dos cosas: el modelo se corta por el límite de tokens, o llena la forma con valores que no
+validan. En cada caso hay exactamente un reintento.
 """
 import time
 from dataclasses import dataclass, field
@@ -18,13 +22,20 @@ from analyst.ollama_http import post_json
 
 T = TypeVar("T", bound=BaseModel)
 
+# Aviso que se agrega al prompt en el reintento, diciendo qué falló.
 RETRY_REMINDER = ("\n\nIMPORTANTE: tu respuesta anterior no cumplió el formato requerido ({problem}). "
                   "Responde solo con JSON válido que cumpla el esquema.")
+# Si la salida se cortó por longitud, el reintento permite 1,5 veces más tokens.
 LENGTH_RETRY_FACTOR = 1.5
 
 
+# =====================================================================
+# BLOQUE: Resultado y métricas de una generación
+# =====================================================================
 @dataclass
 class GenerationInfo:
+    """Datos de la generación: tiempo, tokens, reintentos y avisos."""
+
     seconds: float = 0.0
     prompt_tokens: int = 0
     output_tokens: int = 0
@@ -34,11 +45,18 @@ class GenerationInfo:
 
 @dataclass
 class Generated(Generic[T]):
+    """Valor ya validado junto con los datos de su generación."""
+
     value: T
     info: GenerationInfo
 
 
+# =====================================================================
+# BLOQUE: Cliente de chat
+# =====================================================================
 class OllamaChat:
+    """Habla con /api/chat de Ollama. Temperatura 0 y semilla fija para respuestas reproducibles."""
+
     def __init__(self, model: str | None = None, base_url: str | None = None, timeout: float | None = None,
                  num_ctx: int | None = None, keep_alive: str | None = None,
                  temperature: float = 0.0, seed: int = 7, client: httpx.Client | None = None):
@@ -48,16 +66,19 @@ class OllamaChat:
         self.num_ctx = num_ctx or settings.llm_num_ctx
         self._keep_alive = keep_alive or settings.llm_keep_alive
         self._temperature, self._seed = temperature, seed
-        self._client = client or httpx.Client()   # one connection reused across requests
+        self._client = client or httpx.Client()   # una sola conexión reutilizada entre peticiones
 
     @property
     def name(self) -> str:
+        """Nombre del modelo."""
         return self.model
 
     def generate_structured(self, model_cls: type[T], system: str, user: str, max_tokens: int) -> Generated[T]:
+        """Genera una salida que cumple `model_cls`; reintenta una vez si se cortó o no validó."""
         schema = json_schema(model_cls)
         info = GenerationInfo()
         tokens, prompt, problem = max_tokens, user, ""
+        # Hasta dos intentos: el segundo corrige el problema del primero (más tokens o aviso de formato).
         for attempt in range(2):
             started = time.perf_counter()
             body = post_json(self._client, self._base_url, "/api/chat", self._payload(system, prompt, schema, tokens),
@@ -85,7 +106,7 @@ class OllamaChat:
             "Vuelve a intentarlo; si se repite, prueba otro modelo con LLM_MODEL.")
 
     def warm_up(self) -> None:
-        """Load the model with the same context size the real requests use, so it is not reloaded later."""
+        """Carga el modelo con el mismo tamaño de contexto de las peticiones reales, para que no se recargue después."""
         post_json(self._client, self._base_url, "/api/chat",
                   {"model": self.model, "stream": False, "keep_alive": self._keep_alive,
                    "options": {"num_ctx": self.num_ctx, "num_predict": 1},
@@ -93,6 +114,7 @@ class OllamaChat:
                   timeout=self._timeout, model=self.model, purpose="cargar el modelo")
 
     def _payload(self, system: str, user: str, schema: dict, max_tokens: int) -> dict:
+        """Cuerpo de la petición: esquema, opciones de determinismo y los dos mensajes."""
         return {
             "model": self.model, "stream": False, "format": schema, "keep_alive": self._keep_alive,
             "options": {"temperature": self._temperature, "seed": self._seed,
@@ -102,5 +124,6 @@ class OllamaChat:
 
 
 def _finish(info: GenerationInfo, attempt: int) -> GenerationInfo:
+    """Anota cuántos reintentos hizo falta."""
     info.retries = attempt
     return info

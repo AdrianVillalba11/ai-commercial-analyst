@@ -1,12 +1,18 @@
-"""Errors shared across modules."""
+"""
+ERRORES COMPARTIDOS
+
+Qué hace: define las excepciones propias de la aplicación.
+Con qué se conecta: las lanzan el cliente de Ollama, el planificador y el servicio; la API y la
+línea de comandos las convierten en mensajes claros para quien usa la app.
+"""
 
 
 class OllamaError(Exception):
-    """Ollama is unreachable, a model is missing, or a request failed or timed out.
+    """Ollama no responde, falta un modelo, o una petición falló o superó el tiempo.
 
-    The message is written for the person running the app and says what to do.
+    El mensaje está escrito para quien ejecuta la app e indica qué hacer.
     """
 
 
 class LLMOutputError(OllamaError):
-    """The model answered, but not in the required format, even after a retry."""
+    """El modelo respondió, pero no en el formato exigido, ni siquiera tras el reintento."""

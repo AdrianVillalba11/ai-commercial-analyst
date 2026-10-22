@@ -1,4 +1,12 @@
 <!doctype html>
+<!--
+  PÁGINA PRINCIPAL
+  Qué es: la única página de la aplicación. Solo define la estructura; el contenido de las respuestas
+  lo dibuja web/app.js y la apariencia está en web/style.css.
+  Bloques: barra superior (estado y accesos) -> formulario de pregunta -> progreso -> error -> respuesta
+  -> panel lateral de detalle (fuentes, calidad de datos, alertas).
+  Solo tema claro y sin recursos externos (funciona sin internet).
+-->
 <html lang="es">
 <head>
   <meta charset="utf-8">
@@ -8,6 +16,7 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <!-- BLOQUE: barra superior con título, estado de Ollama y accesos a los paneles -->
   <header class="topbar">
     <div class="brand">
       <h1>Analista comercial de Brío</h1>
@@ -20,9 +29,11 @@
     </div>
   </header>
 
+  <!-- BLOQUE: contenido principal -->
   <main>
     <noscript><p class="banner banner-error">Esta página necesita JavaScript activado.</p></noscript>
 
+    <!-- Formulario de pregunta: texto, botón, opción de búsqueda y preguntas de ejemplo -->
     <section class="card ask" aria-labelledby="ask-title">
       <h2 id="ask-title">Haz una pregunta sobre Brío</h2>
       <label for="question" class="sr-only">Pregunta</label>
@@ -48,16 +59,20 @@
       </div>
     </section>
 
+    <!-- Progreso de los cinco pasos mientras se responde -->
     <section id="progress" class="card progress" hidden aria-live="polite">
       <ol id="steps"></ol>
       <p id="elapsed" class="hint"></p>
     </section>
 
+    <!-- Mensaje de error (se rellena desde app.js) -->
     <div id="error" class="banner banner-error" role="alert" hidden></div>
 
+    <!-- Respuesta: app.js dibuja aquí las tarjetas -->
     <article id="answer" hidden aria-label="Respuesta"></article>
   </main>
 
+  <!-- BLOQUE: panel lateral (fuentes citadas, calidad de datos, alertas de seguridad) -->
   <div id="overlay" class="overlay" hidden></div>
   <aside id="drawer" class="drawer" hidden aria-label="Detalle">
     <div class="drawer-head">
@@ -67,6 +82,7 @@
     <div id="drawer-body" class="drawer-body"></div>
   </aside>
 
+  <!-- Lógica de la página (sin librerías externas) -->
   <script src="/static/app.js" defer></script>
 </body>
 </html>

@@ -1,8 +1,12 @@
-"""Semantic search: embeddings stored in ChromaDB (cosine distance).
+"""
+BÚSQUEDA SEMÁNTICA (ChromaDB)
 
-The embedder is injected, so the model can change without touching this module. A fingerprint
-(hash of the model name and every chunk's text) is stored with the collection: if it matches
-on the next start the stored vectors are reused, otherwise the index is rebuilt.
+Qué hace: guarda los vectores de los fragmentos en ChromaDB y devuelve los más parecidos a la pregunta
+(distancia coseno).
+Con qué se conecta: la usa rag/retriever.py; los vectores los genera rag/embedder.py.
+Idea clave: el generador de vectores se inyecta, así se puede cambiar de modelo sin tocar este módulo.
+Junto a la colección se guarda una "huella" (hash del nombre del modelo y del texto de cada fragmento):
+si coincide en el siguiente arranque se reutilizan los vectores; si no, se reconstruye el índice.
 """
 import hashlib
 from pathlib import Path
@@ -13,18 +17,30 @@ from chromadb.config import Settings
 
 from analyst.docs.chunker import Chunk
 
+# =====================================================================
+# BLOQUE: Constantes
+# =====================================================================
 COLLECTION_NAME = "document_chunks"
 _BATCH = 64
 
 
+# =====================================================================
+# BLOQUE: Contrato del generador de vectores
+# =====================================================================
 class Embedder(Protocol):
+    """Lo único que se le exige a un generador de vectores (permite usar uno falso en las pruebas)."""
+
     @property
     def name(self) -> str: ...
     def embed_documents(self, texts: list[str]) -> list[list[float]]: ...
     def embed_query(self, text: str) -> list[float]: ...
 
 
+# =====================================================================
+# BLOQUE: Índice persistente
+# =====================================================================
 def fingerprint(chunks: list[Chunk], model_name: str) -> str:
+    """Huella del contenido y del modelo: si cambia cualquiera, hay que reconstruir los vectores."""
     digest = hashlib.sha256(model_name.encode("utf-8"))
     for chunk in chunks:
         digest.update(f"\x1e{chunk.chunk_id}\x1f{chunk.embed_text}".encode("utf-8"))
@@ -32,10 +48,12 @@ def fingerprint(chunks: list[Chunk], model_name: str) -> str:
 
 
 class SemanticIndex:
+    """Colección de ChromaDB con los fragmentos; se reconstruye solo si la huella cambió."""
+
     def __init__(self, chunks: list[Chunk], embedder: Embedder, path: Path,
                  collection_name: str = COLLECTION_NAME):
         self._embedder = embedder
-        # Telemetry off: this app handles company documents and must not phone home.
+        # Telemetría desactivada: la app maneja documentos de la empresa y no debe enviar nada afuera.
         self._client = chromadb.PersistentClient(path=str(path), settings=Settings(anonymized_telemetry=False))
         wanted = fingerprint(chunks, embedder.name)
         collection = self._client.get_or_create_collection(collection_name)
@@ -49,6 +67,7 @@ class SemanticIndex:
         self._collection = collection
 
     def _fill(self, collection, chunks: list[Chunk]) -> None:
+        """Calcula y guarda los vectores de todos los fragmentos, por lotes."""
         for start in range(0, len(chunks), _BATCH):
             batch = chunks[start:start + _BATCH]
             collection.add(
@@ -59,7 +78,7 @@ class SemanticIndex:
             )
 
     def search(self, query: str, k: int | None = None) -> list[str]:
-        """Chunk ids from most to least similar. Without k, the full ranking (RRF needs it)."""
+        """Ids de fragmentos del más al menos parecido. Sin k devuelve el ranking completo (RRF lo necesita)."""
         total = self._collection.count()
         if total == 0:
             return []
