@@ -5,10 +5,10 @@ match synonyms, which is what the semantic search is for.
 """
 import math
 import re
-import unicodedata
 from collections import Counter
 
 from analyst.docs.chunker import Chunk
+from analyst.text import fold
 
 STOPWORDS = frozenset("""
 a al algo algun alguna algunas alguno algunos ante como con contra cual cuales cuando cuanto de del desde donde
@@ -18,12 +18,6 @@ sobre son su sus te tambien tu un una unas uno unos y ya
 """.split())
 
 _TOKEN = re.compile(r"[a-z0-9]+(?:[_-][a-z0-9]+)*")
-
-
-def fold(text: str) -> str:
-    """Lowercase and remove accents."""
-    decomposed = unicodedata.normalize("NFKD", text.casefold())
-    return "".join(c for c in decomposed if not unicodedata.combining(c))
 
 
 def stem(word: str) -> str:

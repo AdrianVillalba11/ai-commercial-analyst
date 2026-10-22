@@ -5,7 +5,6 @@ so every citation points to one complete statement. Where the document defines a
 id (INV-01, REP-02, OC-SUR-01, CAM-101...), that id is the chunk id.
 """
 import re
-import unicodedata
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -13,12 +12,12 @@ from pathlib import Path
 from analyst.config import settings
 from analyst.data.cleaning import REGIONS
 from analyst.docs.parser import Block, parse_docx, parse_markdown, parse_pdf
+from analyst.text import REGION_EXACT, fold
 
 _ID = r"[A-Z]{2,5}(?:-[A-Za-z0-9]+)+"
 _ID_PARAGRAPH = re.compile(rf"^({_ID})\s*[|:]")
 _ID_HEADING = re.compile(rf"^({_ID})\s*\|\s*(.+)$")
 _ID_THEN_REST = re.compile(rf"^({_ID})\s+(.*)$")
-_REGION_WORD = re.compile(r"\b(" + "|".join(REGIONS) + r")\b")
 _REGION_CODES = {"SUR": "Sur", "CEN": "Centro", "NOR": "Norte", "ORI": "Oriente", "OCC": "Occidente"}
 
 
@@ -74,13 +73,8 @@ def load_all_chunks(raw_dir: Path | None = None) -> list[Chunk]:
 
 # ------------------------------------------------------------------ helpers
 
-def _fold(text: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", text)
-    return "".join(c for c in decomposed if not unicodedata.combining(c))
-
-
 def _slug(text: str) -> str:
-    return re.sub(r"[^A-Z0-9]+", "-", _fold(text).upper()).strip("-")
+    return re.sub(r"[^A-Z0-9]+", "-", fold(text).upper()).strip("-")
 
 
 def _key(text: str) -> str:
@@ -96,7 +90,7 @@ def _check_unique_ids(chunks: list[Chunk]) -> None:
 
 
 def _regions_of(chunk_id: str, text: str) -> list[str]:
-    found = {m.group(1) for m in _REGION_WORD.finditer(text)}
+    found = {m.group(1) for m in REGION_EXACT.finditer(text)}
     found |= {_REGION_CODES[t] for t in chunk_id.split("-")[1:] if t in _REGION_CODES}
     return [r for r in REGIONS if r in found]
 

@@ -11,13 +11,12 @@ from analyst.analytics.metrics import SalesAnalyzer, format_pct
 from analyst.data.cleaning import REGIONS
 from analyst.docs.chunker import Chunk
 from analyst.guardrails.models import ORIGIN_CONTRAST, FinalClaim
-from analyst.rag.lexical import fold
+from analyst.text import REGION_EXACT, fold
 
 CONTRAST_ID = "CONTRASTE-1"
 TOLERANCE_PP = 1.0     # the report states whole percentages, so +/- 0.5 is rounding; 1 pp leaves some margin
 _LARGEST_DROP = re.compile(r"mayor ca[ií]da")
 _ATTRIBUTION = re.compile(r"explican?\s+(?:aproximadamente\s+)?(?:el\s+)?(\d+)\s*%")
-_REGION_WORD = re.compile(r"\b(" + "|".join(REGIONS) + r")\b")
 _CAUSE_COLUMNS = re.compile(r"promo|precio|descuento")
 
 
@@ -117,7 +116,7 @@ def _check_claims(chunks: list[Chunk], computed_top: str | None) -> list[ClaimCh
     for chunk in chunks:
         if chunk.kind != "afirmacion_reporte":
             continue
-        regions = sorted(set(_REGION_WORD.findall(chunk.text)))
+        regions = sorted(set(REGION_EXACT.findall(chunk.text)))
         if _LARGEST_DROP.search(fold(chunk.text)) and len(regions) == 1 and computed_top:
             estado = "consistente" if regions[0] == computed_top else "contradicha"
             claims.append(ClaimCheck(chunk.chunk_id, estado,

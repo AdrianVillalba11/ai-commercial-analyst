@@ -11,7 +11,6 @@ import re
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 
-from analyst.data.cleaning import REGIONS
 from analyst.docs.chunker import Chunk
 from analyst.guardrails.facts import calc_facts
 from analyst.guardrails.models import (
@@ -20,12 +19,11 @@ from analyst.guardrails.models import (
 from analyst.guardrails.report_check import CONTRAST_ID, ReportContrast
 from analyst.llm.prompts import CalcBlock
 from analyst.llm.schemas import Answer, Claim, Gap
-from analyst.rag.lexical import fold
+from analyst.text import REGION_FOLDED, fold
 
 _ID_PATTERN = re.compile(r"\b[A-Z]{1,5}(?:-[A-Za-z0-9]+)+\b")
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 _CHANNEL_WORD = re.compile(r"\b(tradicional(?:es)?|moderno)\b")
-_REGION_WORD = re.compile(r"\b(" + "|".join(fold(r) for r in REGIONS) + r")\b")
 _CAUSAL = re.compile(r"\b(causo|causaron|provoco|provocaron|se debe a|se debio a|debido a|a causa de|ocasiono|"
                      r"ocasionaron|origino|se atribuye a|se atribuyen a|atribuible a|se asocia a)\b|\bexplican?\s+(?:aproximadamente\s+)?(?:el\s+)?\d+\s*%")
 _LIMITATION_TEXT = re.compile(r"grupo de control|diseno experimental|elasticidad|cambio causal|antes/despues")
@@ -105,7 +103,7 @@ def figures_supported(text: str, source_texts: list[str]) -> list[str]:
 # ------------------------------------------------------------- the checks
 
 def _regions(text: str) -> set[str]:
-    return {m for m in _REGION_WORD.findall(fold(text))}
+    return {m for m in REGION_FOLDED.findall(fold(text))}
 
 
 def _channels(text: str) -> set[str]:

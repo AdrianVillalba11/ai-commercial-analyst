@@ -4,7 +4,6 @@ If the model cannot produce a valid plan (twice), a keyword-based default plan i
 answer says so. A broken Ollama (not running, model missing) is NOT hidden: that error propagates.
 """
 import re
-import unicodedata
 from dataclasses import dataclass, field
 from typing import Protocol, TypeVar
 
@@ -15,6 +14,7 @@ from analyst.errors import LLMOutputError
 from analyst.llm.ollama_client import Generated
 from analyst.llm.prompts import spec_key
 from analyst.llm.schemas import AnalysisSpec, Plan
+from analyst.text import fold
 
 T = TypeVar("T", bound=BaseModel)
 PLAN_MAX_TOKENS = 300
@@ -58,7 +58,7 @@ def plan_question(llm: StructuredLLM, question: str) -> PlanResult:
         return PlanResult(fallback_plan(question), "fallback",
                           [f"El modelo no produjo un plan válido; se usó un plan por defecto. {exc}"])
     plan = normalize_plan(generated.value)
-    if plan.tipo == "fuera_de_alcance" and _DOMAIN.search(_fold(question)):
+    if plan.tipo == "fuera_de_alcance" and _DOMAIN.search(fold(question)):
         return PlanResult(fallback_plan(question), "fallback", generated.info.notes + [
             "El modelo marcó la pregunta como fuera de alcance, pero trata temas del análisis comercial; "
             "se trató como una pregunta en alcance."], generated.info.seconds)
@@ -91,21 +91,16 @@ def normalize_plan(plan: Plan) -> Plan:
     return Plan(tipo=plan.tipo, analisis=analyses, usar_documentos=use_documents)
 
 
-def _fold(text: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", text.casefold())
-    return "".join(c for c in decomposed if not unicodedata.combining(c))
-
-
 def fallback_plan(question: str) -> Plan:
     """Keyword-based plan: compare by region (or channel / presentation if named) and use documents."""
-    q = _fold(question)
+    q = fold(question)
     dimension = "region"
     if "canal" in q:
         dimension = "canal"
     elif re.search(r"presentacion|formato|familiar|individual", q):
         dimension = "presentacion"
     metric = "unidades" if re.search(r"\bunidades?\b", q) else "venta_neta_cop"
-    named = [r for r in REGIONS if re.search(rf"\b{_fold(r)}\b", q)]
+    named = [r for r in REGIONS if re.search(rf"\b{fold(r)}\b", q)]
     kind = "causalidad" if "caus" in q else "contraste_reporte" if "reporte" in q else "integrada"
     return Plan(tipo=kind, analisis=[default_spec(dimension, metric, named[0] if len(named) == 1 else "todas")],
                 usar_documentos=True)

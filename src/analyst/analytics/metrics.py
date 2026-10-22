@@ -5,7 +5,6 @@ request (within the closed catalog below); it never does arithmetic.
 Convention (01_Contexto_Negocio.md): T1 = Jan-Mar 2026, T2 = Apr-Jun 2026,
 absolute change = T2 - T1, percentage change = (T2 / T1 - 1) x 100.
 """
-import unicodedata
 from dataclasses import asdict, dataclass, field
 
 import numpy as np
@@ -13,8 +12,11 @@ import pandas as pd
 
 from analyst.data.cleaning import BRANDS, CHANNELS, PRESENTATIONS, REGIONS, VALID_MONTHS
 from analyst.data.quality_report import EXCLUDED, QualityReport
+from analyst.text import fold
 
 T1_MONTHS = VALID_MONTHS[:3]
+# Complemento de T1 (abr-jun). La clasificación usa "todo lo que no es T1", así que no se lee;
+# se deja para que el par T1/T2 quede explícito.
 T2_MONTHS = VALID_MONTHS[3:]
 
 METRICS = ["venta_neta_cop", "unidades"]
@@ -72,15 +74,9 @@ class MonthlySeries:
         return asdict(self)
 
 
-def _fold(text: str) -> str:
-    """Lowercase and strip accents/spaces so 'Brío', 'brio ' and 'BRIO' compare equal."""
-    decomposed = unicodedata.normalize("NFKD", str(text).strip().casefold())
-    return "".join(c for c in decomposed if not unicodedata.combining(c))
-
-
 def _canonical(value, allowed: list[str], label: str) -> str:
-    lookup = {_fold(a): a for a in allowed}
-    found = lookup.get(_fold(value))
+    lookup = {fold(a): a for a in allowed}
+    found = lookup.get(fold(str(value).strip()))
     if found is None:
         raise ValueError(f"{label} no válido: {value!r}. Opciones: {allowed}")
     return found
