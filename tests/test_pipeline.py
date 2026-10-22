@@ -38,6 +38,13 @@ def test_normalize_removes_repeated_analyses():
     assert [s.agrupar_por for s in different.analisis] == [["region"], ["canal"]]
 
 
+def test_causality_compares_by_region_unless_the_question_names_one():
+    noisy = plan("causalidad", analisis=[spec(agrupar_por=["region", "canal"]), spec(agrupar_por=["canal"])])
+    assert [s.agrupar_por for s in normalize_plan(noisy).analisis] == [["region"]]
+    named = plan("causalidad", analisis=[spec(agrupar_por=["canal"], region="Sur")])
+    assert normalize_plan(named).analisis[0].region == "Sur"
+
+
 def test_normalize_forces_documents_for_the_types_that_need_them():
     for tipo in ("integrada", "contraste_reporte", "causalidad"):
         assert normalize_plan(plan(tipo, docs=False)).usar_documentos is True
@@ -65,6 +72,19 @@ def test_plan_question_returns_the_normalized_model_plan():
     assert result.source == "llm" and result.plan.usar_documentos is True and len(result.plan.analisis) == 1
     assert result.notes == ["Intento 1 descartado"]
     assert llm.calls[0]["user"] == "Pregunta: ¿Las promociones causaron la caída?"
+
+
+def test_a_domain_question_wrongly_called_out_of_scope_is_treated_as_in_scope():
+    llm = FakeLLM(plan=plan("fuera_de_alcance"))
+    result = plan_question(llm, "¿Qué dicen los comerciantes sobre faltantes de producto en el Sur?")
+    assert result.source == "fallback" and result.plan.tipo != "fuera_de_alcance" and result.plan.usar_documentos
+    assert result.plan.analisis[0].region == "Sur" and "fuera de alcance" in result.notes[-1]
+
+
+@pytest.mark.parametrize("question", ["¿Cuál es la capital de Francia?", "Dame una receta de arepas", "¿Quién ganó el mundial?"])
+def test_a_truly_unrelated_question_stays_out_of_scope(question):
+    result = plan_question(FakeLLM(plan=plan("fuera_de_alcance")), question)
+    assert result.source == "llm" and result.plan.tipo == "fuera_de_alcance" and result.plan.analisis == []
 
 
 def test_invalid_model_output_falls_back_to_a_default_plan_with_a_note():
@@ -228,7 +248,7 @@ def test_quantitative_question_computes_and_skips_documents(make_service):
     assert "[CALC-1]" in answer_prompt["user"] and "-30,27 %" in answer_prompt["user"]
     assert "EVID-" not in answer_prompt["user"] and result.evidence == []
     assert result.calc[0].result["rows"][0]["keys"] == {"region": "Sur"}
-    assert set(result.timings) == {"planificacion", "calculo", "redaccion", "total"}
+    assert set(result.timings) == {"planificacion", "calculo", "redaccion", "validacion", "total"}
     assert result.answer == SIMPLE_ANSWER and result.plan_source == "llm" and result.model == "fake-llm"
     assert {n["registro_id"] for n in result.quality_notes} == {"V01999", "V03999", "V03997"}
 
@@ -275,7 +295,7 @@ def test_ollama_down_propagates(make_service):
 
 def test_degraded_retrieval_is_reported_in_the_warnings(make_service):
     llm = FakeLLM(plan=plan("integrada", docs=True))
-    result = make_service(llm, FakeEmbedder(fail=True)).ask("faltantes en el Sur")
+    result = make_service(llm, FakeEmbedder(fail=True)).ask("faltantes en el Sur", mode="hybrid")
     assert any("solo la léxica" in w for w in result.warnings) and result.evidence
 
 

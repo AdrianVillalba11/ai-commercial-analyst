@@ -16,21 +16,31 @@ SECTIONS = [("hechos", "HECHOS (respaldados por cálculos o documentos)"),
             ("contradicciones", "CONTRADICCIONES ENTRE FUENTES")]
 
 
+def _claim_line(claim) -> str:
+    sources = f"  [{', '.join(claim.fuentes)}]" if claim.fuentes else ""
+    return f"  - {claim.texto}{sources}"
+
+
 def format_result(result: AskResult) -> str:
-    answer = result.answer
-    lines = ["", f"RESUMEN: {answer.resumen}"]
+    final = result.final
+    written_by_code = "" if final.resumen_origen == "modelo" else "  (redactado por el sistema)"
+    lines = ["", f"RESUMEN: {final.resumen}{written_by_code}"]
     for field_name, title in SECTIONS:
-        claims = getattr(answer, field_name)
+        claims = getattr(final, field_name)
         if claims:
-            lines += ["", title + ":"] + [f"  - {c.texto}  [{', '.join(c.fuentes)}]" for c in claims]
-    if answer.insuficiente:
-        lines += ["", "INFORMACIÓN INSUFICIENTE:"] + [f"  - {g.texto}" for g in answer.insuficiente]
+            lines += ["", title + ":"] + [_claim_line(c) for c in claims]
+    if final.insuficiente:
+        lines += ["", "INFORMACIÓN INSUFICIENTE:"] + [_claim_line(c) for c in final.insuficiente]
+    if final.descartes:
+        lines += ["", f"DESCARTADO POR EL VALIDADOR ({len(final.descartes)}):"]
+        lines += [f"  x {d.texto}\n      Motivo: {d.motivo}" for d in final.descartes]
     if result.calc:
         lines += ["", "CÁLCULOS:"] + [f"  {b.text}".replace("\n", "\n  ") for b in result.calc]
     if result.evidence:
         lines += ["", "EVIDENCIA USADA: " + ", ".join(e.chunk_id for e in result.evidence)]
-    if result.warnings:
-        lines += ["", "AVISOS:"] + [f"  ! {w}" for w in result.warnings]
+    notices = result.warnings + final.avisos
+    if notices:
+        lines += ["", "AVISOS:"] + [f"  ! {w}" for w in notices]
     steps = "  ".join(f"{name} {secs:.1f}s" for name, secs in result.timings.items())
     lines += ["", f"[{result.model} | modo {result.mode} | plan: {result.plan_source} ({result.plan.tipo}) | {steps}]"]
     return "\n".join(lines)
@@ -53,7 +63,8 @@ def main(argv: list[str] | None = None, service_factory: Callable[[], AnalystSer
          out: TextIO | None = None) -> int:
     parser = argparse.ArgumentParser(prog="analyst.cli", description="Asistente de análisis comercial de Brío")
     parser.add_argument("question", nargs="*", help="La pregunta (si se omite, modo interactivo)")
-    parser.add_argument("--mode", choices=["hybrid", "semantic", "lexical"], default="hybrid")
+    parser.add_argument("--mode", choices=["hybrid", "semantic", "lexical"], default=None,
+                        help="Búsqueda en documentos (por defecto, RETRIEVAL_MODE del .env)")
     parser.add_argument("--json", action="store_true", help="Imprime el resultado completo como JSON")
     args = parser.parse_args(argv)
     out = out or sys.stdout

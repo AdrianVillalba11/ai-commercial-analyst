@@ -33,7 +33,7 @@ class OllamaEmbedder:
         return self._embed([self._query_prefix + text])[0]
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
-        body = post_json(self._client, self._base_url, "/api/embed", {"model": self.model, "input": texts},
+        body = post_json(self._client, self._base_url, "/api/embed", {"model": self.model, "input": texts, "keep_alive": settings.llm_keep_alive},
                          timeout=self._timeout, model=self.model, purpose="generar embeddings")
         try:
             vectors = body["embeddings"]

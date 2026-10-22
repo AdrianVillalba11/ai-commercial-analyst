@@ -17,6 +17,7 @@ class Settings:
     llm_timeout_seconds: float = float(os.getenv("LLM_TIMEOUT_SECONDS", "120"))
     llm_num_ctx: int = int(os.getenv("LLM_NUM_CTX", "4096"))
     llm_keep_alive: str = os.getenv("LLM_KEEP_ALIVE", "30m")
+    retrieval_mode: str = os.getenv("RETRIEVAL_MODE", "semantic")   # semantic | hybrid | lexical
     chroma_path: Path = PROJECT_ROOT / os.getenv("CHROMA_PATH", ".cache/chroma")
     raw_data_dir: Path = PROJECT_ROOT / "data" / "raw"
 

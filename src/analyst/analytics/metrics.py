@@ -110,6 +110,10 @@ class SalesAnalyzer:
         self._data = data
         self._report = report
 
+    @property
+    def columns(self) -> list[str]:
+        return list(self._data.columns)
+
     # ---- public API ----
 
     def compare_periods(self, marca: str, group_by=None, metric: str = "venta_neta_cop",

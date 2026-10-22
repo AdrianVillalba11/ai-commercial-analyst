@@ -320,3 +320,14 @@ def test_input_validation(retriever):
         retriever.retrieve("x", top_k=0)
     with pytest.raises(ValueError):
         retriever.retrieve("x", mode="magia")
+
+
+def test_embedding_requests_keep_the_model_loaded():
+    seen = []
+
+    def handler(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"embeddings": [[0.0]]})
+
+    mock_embedder(handler).embed_query("x")
+    assert seen[0]["keep_alive"]

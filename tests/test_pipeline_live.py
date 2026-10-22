@@ -89,3 +89,40 @@ def test_report_table(results, capsys):
             t = r.timings
             print(f"{name:13} {r.plan.tipo:18} {t['planificacion']:6.1f} {t.get('recuperacion', 0):7.1f} "
                   f"{t['redaccion']:7.1f} {t['total']:7.1f}  {len(fake)}/{len(cited)} {fake}")
+
+
+# ---- what the analyst finally sees (after the guardrails) ----
+
+def test_the_final_answer_cites_only_real_sources_whatever_the_model_wrote(results):
+    for name, result in results.items():
+        valid = known_ids(result)
+        for section in (result.final.hechos, result.final.hipotesis):
+            for claim in section:
+                if claim.origen in ("modelo", "documento"):
+                    assert set(claim.fuentes) <= valid, (name, claim.fuentes)
+
+
+def test_the_final_quantitative_answer_states_the_largest_drop_with_its_subject(results):
+    fact = results["cuantitativa"].final.hechos[0]
+    assert fact.origen == "calculo" and "Sur" in fact.texto and "-30,27 %" in fact.texto
+    assert results["cuantitativa"].final.hipotesis == []          # no documents were used: nothing to hypothesise from
+
+
+def test_the_final_contrast_answer_comes_from_the_code_not_from_the_model(results):
+    final = results["contraste"].final
+    assert final.resumen_origen == "contraste" and final.resumen.startswith("El reporte NO es consistente")
+    joined = " ".join(c.texto for c in final.contradicciones)
+    assert "Centro" in joined and "-23 %" in joined and "-9,03 %" in joined and "Sur" in joined
+    assert results["contraste"].contrast["consistent"] is False
+
+
+def test_the_final_causality_answer_says_what_cannot_be_shown(results):
+    final = results["causalidad"].final
+    assert final.resumen.startswith("No se puede afirmar causalidad")
+    assert any("no contiene variables de promoción ni de precio" in c.texto for c in final.insuficiente)
+    assert all("causaron la caída" not in c.texto.lower() for c in final.hechos)
+
+
+def test_whatever_the_validator_discards_is_reported_with_a_reason(results):
+    for result in results.values():
+        assert all(d.motivo.strip() and d.texto.strip() for d in result.final.descartes)
